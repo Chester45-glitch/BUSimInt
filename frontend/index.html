@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InterviewSim — AI Interview Simulator</title>
+  <meta name="description" content="Practice job interviews with an AI-powered simulator. Get real-time feedback on confidence, emotion, and answer quality.">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     SCREEN 1: SETUP
+══════════════════════════════════════════════════════════ -->
+<main id="setup-screen" class="screen active" role="main" aria-label="Interview Setup">
+  <div class="setup-container">
+
+    <header class="setup-header">
+      <div class="setup-logo">🎙️</div>
+      <h1 class="setup-title">InterviewSim</h1>
+      <p class="setup-subtitle">Practice with AI. Gain confidence. Land the job.</p>
+    </header>
+
+    <!-- Step 1: Interview Type -->
+    <section class="setup-section" aria-labelledby="type-label">
+      <p class="setup-section-label" id="type-label">Step 1 — Choose Interview Type</p>
+      <div id="interview-type-grid" role="group" aria-label="Interview types"></div>
+    </section>
+
+    <!-- Step 2: Job Title -->
+    <section class="setup-section" aria-labelledby="job-label">
+      <p class="setup-section-label" id="job-label">Step 2 — Job Title (Optional)</p>
+      <div class="job-title-wrap">
+        <input
+          type="text"
+          id="job-title-input"
+          class="setup-input"
+          placeholder="e.g., Software Engineer, Head Nurse, Account Manager"
+          maxlength="80"
+          autocomplete="off"
+          aria-label="Job title for the interview"
+        />
+      </div>
+    </section>
+
+    <!-- Step 3: Experience Level -->
+    <section class="setup-section" aria-labelledby="exp-label">
+      <p class="setup-section-label" id="exp-label">Step 3 — Your Experience Level</p>
+      <div id="experience-grid" role="group" aria-label="Experience levels"></div>
+    </section>
+
+    <!-- Step 4: Mode -->
+    <section class="setup-section" aria-labelledby="mode-label">
+      <p class="setup-section-label" id="mode-label">Step 4 — Simulation Mode</p>
+      <div id="mode-grid" role="group" aria-label="Simulation modes"></div>
+    </section>
+
+    <!-- Start CTA -->
+    <div id="setup-error" role="alert"></div>
+    <div class="setup-cta">
+      <button id="start-btn" class="btn btn--primary" aria-label="Start interview simulation">
+        ▶ &nbsp;Start Interview
+      </button>
+    </div>
+
+  </div>
+</main>
+
+<!-- ══════════════════════════════════════════════════════
+     SCREEN 2: INTERVIEW
+══════════════════════════════════════════════════════════ -->
+<section id="interview-screen" class="screen" aria-label="Interview Simulation" aria-hidden="true">
+
+  <!-- Header -->
+  <header class="interview-header">
+    <div class="interview-header-logo">🎙️</div>
+    <span class="interview-header-title">InterviewSim</span>
+    <span id="interview-type-badge" class="interview-badge">Interview</span>
+    <span id="interview-mode-badge" class="interview-badge">Chat Mode</span>
+    <div class="interview-header-spacer"></div>
+    <button id="end-interview-btn" class="end-btn" aria-label="End the interview simulation">
+      ⏹ End Interview
+    </button>
+  </header>
+
+  <!-- Messages -->
+  <div id="chat-messages" class="chat-area" role="log" aria-live="polite" aria-label="Interview conversation"></div>
+
+  <!-- Chat Input -->
+  <div id="chat-interface" style="display: none;">
+    <textarea
+      id="chat-input"
+      placeholder="Type your answer here..."
+      rows="1"
+      aria-label="Type your interview answer"
+      maxlength="2000"
+    ></textarea>
+    <button id="chat-send-btn" aria-label="Send answer">
+      ➤
+    </button>
+  </div>
+
+  <!-- Voice Interface -->
+  <div id="voice-interface" style="display: none;" aria-label="Voice controls">
+    <!-- Voice transcript log is in chat-messages above -->
+    <div class="voice-wave" id="voice-wave" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <button id="voice-btn" class="voice-btn voice-btn--idle" aria-label="Click to speak your answer">
+      🎙️
+    </button>
+    <p id="voice-status">Click to speak</p>
+    <p id="voice-interim-text" aria-live="polite"></p>
+  </div>
+
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     SCREEN 3: ANALYSIS
+══════════════════════════════════════════════════════════ -->
+<section id="analysis-screen" class="screen" aria-label="Interview Analysis" aria-hidden="true">
+
+  <header class="analysis-header">
+    <div class="interview-header-logo">📊</div>
+    <span class="analysis-header-title">Interview Analysis</span>
+    <span class="interview-badge" id="analysis-job-title"></span>
+    <div class="analysis-header-spacer"></div>
+    <div class="analysis-header-actions">
+      <button id="download-btn" class="btn btn--ghost" aria-label="Download transcript">
+        ⬇ Transcript
+      </button>
+      <button id="restart-btn" class="btn btn--primary" aria-label="Start a new interview">
+        ↺ New Interview
+      </button>
+    </div>
+  </header>
+
+  <!-- Loading -->
+  <div id="analysis-loading" class="analysis-loading" aria-live="polite">
+    <div class="analysis-spinner" aria-hidden="true"></div>
+    <p class="analysis-loading-text">Analyzing your interview performance...</p>
+    <p class="analysis-loading-text" style="font-size:0.78rem; color: var(--text-muted);">
+      Evaluating confidence, clarity, and answer quality
+    </p>
+  </div>
+
+  <!-- Error -->
+  <p id="analysis-error-msg" role="alert">
+    ⚠️ Failed to load analysis. Please check your connection and try again.
+  </p>
+
+  <!-- Analysis Content -->
+  <div id="analysis-content">
+
+    <!-- Row 1: Score + Emotion -->
+    <div class="analysis-grid">
+
+      <!-- Overall Score -->
+      <div class="analysis-card">
+        <p class="analysis-card__title">Overall Performance</p>
+        <div class="score-ring-wrap">
+          <div class="score-ring" id="overall-score-ring">
+            <svg viewBox="0 0 130 130" width="130" height="130">
+              <circle class="score-ring__track" cx="65" cy="65" r="54"/>
+              <circle class="score-ring__fill" cx="65" cy="65" r="54"/>
+            </svg>
+            <div class="score-ring__text">
+              <span class="score-value" id="overall-score-value">—</span>
+              <span class="score-label">/ 100</span>
+            </div>
+          </div>
+          <div class="score-info">
+            <h3>Readiness Level</h3>
+            <p id="analysis-summary">—</p>
+            <span class="readiness-badge" id="readiness-level">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Emotion Analysis -->
+      <div class="analysis-card">
+        <p class="analysis-card__title">Emotion Analysis</p>
+        <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 14px;">
+          Dominant tone: <strong id="emotion-dominant" style="color: var(--text-primary)">—</strong>
+        </p>
+        <div id="emotion-bars"></div>
+      </div>
+
+      <!-- Answer Strength -->
+      <div class="analysis-card">
+        <p class="analysis-card__title">Answer Strength</p>
+        <div id="strength-bars"></div>
+      </div>
+
+      <!-- Strengths -->
+      <div class="analysis-card">
+        <p class="analysis-card__title">Your Strengths</p>
+        <ul class="strengths-list" id="strengths-list"></ul>
+      </div>
+
+      <!-- Improvements -->
+      <div class="analysis-card analysis-card--full">
+        <p class="analysis-card__title">Areas to Improve</p>
+        <div id="improvements-list"></div>
+      </div>
+
+      <!-- Question by Question -->
+      <div class="analysis-card analysis-card--full">
+        <p class="analysis-card__title">
+          Question-by-Question Feedback
+          <span style="color:var(--text-muted); font-weight:400; margin-left:8px">
+            (<span id="analysis-question-count">0</span> exchanges)
+          </span>
+        </p>
+        <div id="question-feedback-list"></div>
+      </div>
+
+    </div>
+
+    <!-- Top Tip -->
+    <div class="top-tip-card">
+      <span class="top-tip-icon">🏆</span>
+      <div>
+        <p class="top-tip-label">Top Recommendation</p>
+        <p class="top-tip-text" id="top-tip">—</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL: End Interview Confirmation
+══════════════════════════════════════════════════════════ -->
+<div id="end-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-box">
+    <div class="modal-icon">🏁</div>
+    <h2 class="modal-title" id="modal-title">End Interview?</h2>
+    <p class="modal-body">
+      This will end the simulation and generate your performance analysis. 
+      This action cannot be undone.
+    </p>
+    <div class="modal-actions">
+      <button id="modal-cancel-btn" class="btn btn--ghost">Continue Interview</button>
+      <button id="modal-confirm-btn" class="btn btn--danger">Yes, Analyze Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script type="module" src="js/app.js"></script>
+
+</body>
+</html>
