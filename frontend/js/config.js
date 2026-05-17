@@ -3,7 +3,7 @@ const Config = {
   // Backend API base URL — change this to your Render deployment URL in production
   API_BASE_URL: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:3001/api'
-    : 'https://your-render-backend.onrender.com/api', // ← Update this after deploying to Render
+    : 'https://busimint.onrender.com', // ← Update this after deploying to Render
 
   // Interview types available in the setup screen
   INTERVIEW_TYPES: [
