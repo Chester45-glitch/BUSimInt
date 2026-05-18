@@ -138,10 +138,20 @@ export async function startListening(onTranscript, onEnd, onError) {
   }
 }
 
-// ── Whisper fallback via MediaRecorder ────────────────────────
-let mediaRecorder = null;
-let audioChunks   = [];
-let whisperActive = false;
+// ── Whisper fallback via MediaRecorder + Web Audio VAD ───────
+// Records until the user stops speaking (detected via RMS silence),
+// rather than cutting off after a fixed 4-second window.
+let mediaRecorder  = null;
+let audioChunks    = [];
+let whisperActive  = false;
+let vadAudioCtx    = null; // Web Audio context for voice activity detection
+
+// VAD tuning constants
+const VAD_SILENCE_THRESHOLD = 8;    // RMS below this = silence (0-100 scale)
+const VAD_SPEECH_THRESHOLD  = 12;   // RMS above this = speech confirmed
+const VAD_SILENCE_MS        = 1800; // ms of silence after speech before we stop
+const VAD_MAX_MS            = 45000; // safety cap: stop after 45 s regardless
+const VAD_MIN_MS            = 400;   // don't stop before 400 ms (avoid clipping first word)
 
 function _startWhisperListening() {
   if (!isListening) return;
@@ -153,13 +163,16 @@ function _startWhisperListening() {
   }
 
   whisperActive = true;
-  audioChunks = [];
+  audioChunks   = [];
 
+  // Close any leftover AudioContext from a previous round
+  if (vadAudioCtx) { try { vadAudioCtx.close(); } catch (_) {} vadAudioCtx = null; }
+
+  let mimeType;
   try {
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
-
     mediaRecorder = new MediaRecorder(micStream, { mimeType });
   } catch (e) {
     if (onErrorCb) onErrorCb('Could not start recording: ' + e.message);
@@ -171,12 +184,15 @@ function _startWhisperListening() {
   };
 
   mediaRecorder.onstop = async () => {
+    // Clean up VAD
+    if (vadAudioCtx) { try { vadAudioCtx.close(); } catch (_) {} vadAudioCtx = null; }
+
     if (!whisperActive) return;
-    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+    const blob = new Blob(audioChunks, { type: mimeType });
     audioChunks = [];
 
-    if (blob.size < 1000) {
-      // Too short — restart
+    if (blob.size < 1500) {
+      // Too short to contain real speech — restart and wait
       if (isListening) setTimeout(() => _startWhisperListening(), 300);
       return;
     }
@@ -184,10 +200,9 @@ function _startWhisperListening() {
     if (onTranscriptCb) onTranscriptCb('🔄 Processing...', false);
 
     try {
-      const import_ = await import('./config.js');
-      const Config = import_.default;
       const formData = new FormData();
-      formData.append('audio', blob, 'audio.webm');
+      const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+      formData.append('audio', blob, `audio.${ext}`);
 
       const res = await fetch(`${Config.API_BASE_URL}/stt/whisper`, {
         method: 'POST',
@@ -200,7 +215,7 @@ function _startWhisperListening() {
         if (text) {
           fullTranscript = text;
           if (onTranscriptCb) onTranscriptCb(text, false);
-          // Silence timer
+          // Short pause after processing before calling onEnd
           clearTimeout(silenceTimer);
           silenceTimer = setTimeout(() => {
             if (isListening && fullTranscript.trim()) {
@@ -209,24 +224,87 @@ function _startWhisperListening() {
               if (onTranscriptCb) onTranscriptCb(result, true);
               if (onEndCb) onEndCb(result);
             }
-          }, 1500);
+          }, 600);
+          return; // Don't restart — we have a complete answer
         }
       }
     } catch (e) {
       console.warn('[STT Whisper] transcription failed:', e.message);
     }
 
-    // Restart recording segment
+    // No transcript yet — restart and keep listening
     if (isListening) setTimeout(() => _startWhisperListening(), 200);
   };
 
-  // Record in 4-second segments
-  mediaRecorder.start();
-  setTimeout(() => {
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      mediaRecorder.stop();
-    }
-  }, 4000);
+  // ── Voice Activity Detection ──────────────────────────────
+  // Uses Web Audio AnalyserNode to watch RMS levels in real time.
+  // Recording stops only after genuine silence following real speech,
+  // not after a fixed timer that would cut the user off mid-sentence.
+  try {
+    vadAudioCtx        = new (window.AudioContext || window.webkitAudioContext)();
+    const source       = vadAudioCtx.createMediaStreamSource(micStream);
+    const analyser     = vadAudioCtx.createAnalyser();
+    analyser.fftSize   = 512;
+    source.connect(analyser);
+
+    const buf         = new Uint8Array(analyser.frequencyBinCount);
+    const startTime   = Date.now();
+    let hasSpeech     = false;
+    let silenceStart  = null;
+    let vadRunning    = true;
+
+    const tick = () => {
+      if (!vadRunning || !whisperActive || !isListening) return;
+
+      analyser.getByteTimeDomainData(buf);
+
+      // Compute RMS on 0-100 scale
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / buf.length) * 100;
+
+      const elapsed = Date.now() - startTime;
+
+      if (rms >= VAD_SPEECH_THRESHOLD) {
+        hasSpeech    = true;
+        silenceStart = null;
+      } else if (rms < VAD_SILENCE_THRESHOLD && hasSpeech) {
+        if (!silenceStart) silenceStart = Date.now();
+        const silenceDuration = Date.now() - silenceStart;
+
+        if (silenceDuration >= VAD_SILENCE_MS && elapsed >= VAD_MIN_MS) {
+          // User stopped speaking — commit the recording
+          console.log('[STT Whisper] VAD: silence detected, stopping recording');
+          vadRunning = false;
+          if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+          return;
+        }
+      }
+
+      // Safety cap: stop after VAD_MAX_MS regardless
+      if (elapsed >= VAD_MAX_MS) {
+        console.log('[STT Whisper] VAD: max duration reached');
+        vadRunning = false;
+        if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+        return;
+      }
+
+      requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+  } catch (vadErr) {
+    // VAD unavailable (very old browser) — fall back to 8-second fixed window
+    console.warn('[STT Whisper] VAD unavailable, using fixed window:', vadErr.message);
+    setTimeout(() => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+    }, 8000);
+  }
+
+  mediaRecorder.start(200); // collect chunks every 200 ms for smoother onstop data
 }
 
 // Track whether the current recognition instance was intentionally stopped by us
@@ -318,33 +396,21 @@ function _startRecognition(SR) {
     if (err === 'network') {
       networkRetries++;
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
-
-      // Immediately kill ALL handlers on this rec and abort it.
-      // Two races this prevents:
-      //   1. rec.onend fires right after onerror — without this, onend sees
-      //      recognition===rec and schedules its own _startRecognition (300ms),
-      //      racing our controlled retry (900ms) and doubling restarts.
-      //   2. A stale 900ms setTimeout from an earlier retry fires after we've
-      //      already switched to Whisper, creating ghost "retry 3/2" sessions.
-      rec.onstart  = null;
-      rec.onresult = null;
-      rec.onerror  = null;
-      rec.onend    = null;
-      recognition  = null;
-      try { rec.abort(); } catch (_) {}
-
       if (networkRetries < MAX_NETWORK_RETRIES && isListening) {
+        // Do NOT stop micStream here — tearing it down and requesting it again
+        // was causing repeated "permission granted" logs and an audio pipeline
+        // reset that triggered another network error immediately after.
         setTimeout(() => {
-          if (!isListening || useWhisperFallback) return;
+          if (!isListening) return;
           _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
         }, 900 * networkRetries);
         return;
       }
-
-      // Persistent network failures -> switch to Whisper for this whole session
+      // Persistent network failures → switch to Whisper
       console.log('[STT] Switching to Whisper fallback after persistent network errors');
       useWhisperFallback = true;
-      sessionStorage.setItem('stt_use_whisper', 'true');
+      sessionStorage.setItem('stt_use_whisper', 'true'); // remember for this session
+      recognition = null;
       if (isListening) {
         if (onTranscriptCb) onTranscriptCb('', false);
         _startWhisperListening();
