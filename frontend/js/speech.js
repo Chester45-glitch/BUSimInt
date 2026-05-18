@@ -90,7 +90,7 @@ let onEndCb        = null;
 let onErrorCb      = null;
 let networkRetries = 0;
 let micStream      = null; // Keep mic stream alive to prevent network errors
-let useWhisperFallback = sessionStorage.getItem('stt_use_whisper') === 'true'; // Switch to Whisper after repeated network failures
+let useWhisperFallback = localStorage.getItem('stt_use_whisper') === 'true'; // Switch to Whisper after repeated network failures
 const MAX_NETWORK_RETRIES = 2; // Switch to Whisper after 2 failures, not 3
 
 export function isSpeechRecognitionSupported() {
@@ -130,10 +130,12 @@ export async function startListening(onTranscript, onEnd, onError) {
   isListening    = true;
 
   if (useWhisperFallback || !SR) {
-    // Use Groq Whisper via MediaRecorder
-    setTimeout(() => _startWhisperListening(), 250);
+    // Web Speech API failed in a previous session (or unsupported browser) —
+    // go straight to Whisper, skip the 2-retry wait entirely.
+    console.log('[STT] Using Whisper directly (Web Speech API unavailable/failed)');
+    setTimeout(() => _startWhisperListening(), 100);
   } else {
-    // Use Web Speech API first
+    // Probe Web Speech API. It will self-demote to Whisper after 2 network errors.
     setTimeout(() => _startRecognition(SR), 250);
   }
 }
@@ -432,10 +434,11 @@ function _startRecognition(SR) {
         }, 900 * networkRetries);
         return;
       }
-      // Persistent network failures → switch to Whisper for this whole session
+      // Persistent network failures → switch to Whisper permanently
       console.log('[STT] Switching to Whisper fallback after persistent network errors');
       useWhisperFallback = true;
-      sessionStorage.setItem('stt_use_whisper', 'true');
+      networkRetries = 0;
+      localStorage.setItem('stt_use_whisper', 'true');
       if (isListening) {
         if (onTranscriptCb) onTranscriptCb('', false);
         _startWhisperListening();
