@@ -318,21 +318,33 @@ function _startRecognition(SR) {
     if (err === 'network') {
       networkRetries++;
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
+
+      // Immediately kill ALL handlers on this rec and abort it.
+      // Two races this prevents:
+      //   1. rec.onend fires right after onerror — without this, onend sees
+      //      recognition===rec and schedules its own _startRecognition (300ms),
+      //      racing our controlled retry (900ms) and doubling restarts.
+      //   2. A stale 900ms setTimeout from an earlier retry fires after we've
+      //      already switched to Whisper, creating ghost "retry 3/2" sessions.
+      rec.onstart  = null;
+      rec.onresult = null;
+      rec.onerror  = null;
+      rec.onend    = null;
+      recognition  = null;
+      try { rec.abort(); } catch (_) {}
+
       if (networkRetries < MAX_NETWORK_RETRIES && isListening) {
-        // Do NOT stop micStream here — tearing it down and requesting it again
-        // was causing repeated "permission granted" logs and an audio pipeline
-        // reset that triggered another network error immediately after.
         setTimeout(() => {
-          if (!isListening) return;
+          if (!isListening || useWhisperFallback) return;
           _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
         }, 900 * networkRetries);
         return;
       }
-      // Persistent network failures → switch to Whisper
+
+      // Persistent network failures -> switch to Whisper for this whole session
       console.log('[STT] Switching to Whisper fallback after persistent network errors');
       useWhisperFallback = true;
-      sessionStorage.setItem('stt_use_whisper', 'true'); // remember for this session
-      recognition = null;
+      sessionStorage.setItem('stt_use_whisper', 'true');
       if (isListening) {
         if (onTranscriptCb) onTranscriptCb('', false);
         _startWhisperListening();
