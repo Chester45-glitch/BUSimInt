@@ -1,430 +1,337 @@
-// js/ui.js — All DOM manipulation and rendering functions
+// js/ui.js — All DOM manipulation and rendering
 import Config from './config.js';
 
-// ─── Screen Management ────────────────────────────────────────────────────────
-
-export function showScreen(screenId) {
+// ── Screen Management ────────────────────────────────────────
+export function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => {
     s.classList.remove('active');
     s.setAttribute('aria-hidden', 'true');
   });
-  const target = document.getElementById(screenId);
-  if (target) {
-    target.classList.add('active');
-    target.setAttribute('aria-hidden', 'false');
-  }
+  const t = document.getElementById(id);
+  if (t) { t.classList.add('active'); t.setAttribute('aria-hidden', 'false'); }
 }
 
-// ─── Setup Screen ─────────────────────────────────────────────────────────────
-
+// ── Setup Screen ─────────────────────────────────────────────
 export function renderSetupScreen() {
-  // Render interview type cards
   const typeGrid = document.getElementById('interview-type-grid');
   if (typeGrid) {
     typeGrid.innerHTML = Config.INTERVIEW_TYPES.map(t => `
-      <button class="type-card" data-value="${t.value}" style="--accent: ${t.color}" 
-              aria-label="Select ${t.label} interview type">
+      <button class="type-card" data-value="${t.value}" aria-label="${t.label}">
         <span class="type-icon">${t.icon}</span>
         <span class="type-label">${t.label}</span>
-      </button>
-    `).join('');
+      </button>`).join('');
   }
-
-  // Render experience level options
   const expGrid = document.getElementById('experience-grid');
   if (expGrid) {
     expGrid.innerHTML = Config.EXPERIENCE_LEVELS.map(l => `
-      <button class="exp-card" data-value="${l.value}" aria-label="Select ${l.label} experience level">
+      <button class="exp-card" data-value="${l.value}" aria-label="${l.label}">
         <span class="exp-label">${l.label}</span>
         <span class="exp-sub">${l.sub}</span>
-      </button>
-    `).join('');
+      </button>`).join('');
   }
-
-  // Render mode options
   const modeGrid = document.getElementById('mode-grid');
   if (modeGrid) {
     modeGrid.innerHTML = Config.MODES.map(m => `
-      <button class="mode-card" data-value="${m.value}" aria-label="Select ${m.label}">
+      <button class="mode-card" data-value="${m.value}" aria-label="${m.label}">
         <span class="mode-icon">${m.icon}</span>
         <span class="mode-label">${m.label}</span>
         <span class="mode-desc">${m.desc}</span>
-      </button>
-    `).join('');
+      </button>`).join('');
   }
 }
 
 export function selectCard(container, value) {
-  container.querySelectorAll('.type-card, .exp-card, .mode-card').forEach(card => {
-    card.classList.toggle('selected', card.dataset.value === value);
+  container.querySelectorAll('[data-value]').forEach(c => {
+    c.classList.toggle('selected', c.dataset.value === value);
   });
 }
 
 export function validateSetupAndGetErrors(config) {
-  const errors = [];
-  if (!config.type) errors.push('Please select an interview type');
-  if (!config.experienceLevel) errors.push('Please select your experience level');
-  if (!config.mode) errors.push('Please select a simulation mode');
-  return errors;
+  const e = [];
+  if (!config.type) e.push('Please select an interview type');
+  if (!config.experienceLevel) e.push('Please select your experience level');
+  if (!config.mode) e.push('Please select a simulation mode');
+  return e;
 }
 
-export function showSetupError(message) {
+export function showSetupError(msg) {
   const el = document.getElementById('setup-error');
-  if (el) {
-    el.textContent = message;
-    el.style.display = 'block';
-    setTimeout(() => { el.style.display = 'none'; }, 4000);
-  }
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 4000);
 }
 
-// ─── Chat / Interview Screen ──────────────────────────────────────────────────
-
-/**
- * Append a message bubble to the chat
- */
-export function appendMessage(role, content, animate = true) {
-  const chatMessages = document.getElementById('chat-messages');
-  if (!chatMessages) return;
-
-  const messageEl = document.createElement('div');
-  messageEl.className = `message message--${role}${animate ? ' message--entering' : ''}`;
-
-  const avatar = role === 'assistant'
-    ? `<div class="message-avatar">🤵</div>`
-    : `<div class="message-avatar">👤</div>`;
-
-  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  messageEl.innerHTML = `
-    ${avatar}
-    <div class="message-body">
-      <div class="message-bubble">
-        <p class="message-text">${escapeHTML(content)}</p>
-      </div>
-      <span class="message-time">${time}</span>
-    </div>
-  `;
-
-  // Add speak button for assistant messages (chat mode)
-  if (role === 'assistant') {
-    const speakBtn = document.createElement('button');
-    speakBtn.className = 'speak-btn';
-    speakBtn.innerHTML = '🔊';
-    speakBtn.title = 'Read aloud';
-    speakBtn.setAttribute('data-content', content);
-    speakBtn.setAttribute('aria-label', 'Read this message aloud');
-    messageEl.querySelector('.message-bubble').appendChild(speakBtn);
-  }
-
-  chatMessages.appendChild(messageEl);
-
-  // Scroll to bottom
-  requestAnimationFrame(() => {
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    if (animate) {
-      requestAnimationFrame(() => messageEl.classList.remove('message--entering'));
-    }
-  });
-
-  return messageEl;
-}
-
-/**
- * Show typing indicator while waiting for response
- */
-export function showTypingIndicator() {
-  const chatMessages = document.getElementById('chat-messages');
-  if (!chatMessages || document.getElementById('typing-indicator')) return;
-
-  const indicator = document.createElement('div');
-  indicator.id = 'typing-indicator';
-  indicator.className = 'message message--assistant typing-indicator';
-  indicator.innerHTML = `
-    <div class="message-avatar">🤵</div>
-    <div class="message-body">
-      <div class="message-bubble">
-        <div class="typing-dots">
-          <span></span><span></span><span></span>
-        </div>
-      </div>
-    </div>
-  `;
-
-  chatMessages.appendChild(indicator);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-export function hideTypingIndicator() {
-  const indicator = document.getElementById('typing-indicator');
-  if (indicator) indicator.remove();
-}
-
-/**
- * Set interview header info
- */
+// ── Interview Screen ─────────────────────────────────────────
 export function setInterviewHeader(config) {
   const badge = document.getElementById('interview-type-badge');
   const modeBadge = document.getElementById('interview-mode-badge');
-
-  if (badge) {
-    const typeInfo = Config.INTERVIEW_TYPES.find(t => t.value === config.type);
-    badge.textContent = `${typeInfo?.icon || '💼'} ${config.jobTitle || config.type}`;
-    badge.style.setProperty('--accent', typeInfo?.color || '#6C63FF');
-  }
-
+  if (badge) badge.textContent = config.jobTitle || config.type;
   if (modeBadge) {
     modeBadge.textContent = config.mode === 'voice' ? '🎙️ Voice Mode' : '💬 Chat Mode';
-    modeBadge.classList.toggle('voice-mode', config.mode === 'voice');
   }
 }
 
-// ─── Voice UI ─────────────────────────────────────────────────────────────────
+export function appendMessage(role, content, animate = true) {
+  const container = document.getElementById('chat-messages');
+  if (!container) return;
 
+  const el = document.createElement('div');
+  el.className = `message message--${role}`;
+
+  const avatar = role === 'assistant' ? '🤵' : '👤';
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  el.innerHTML = `
+    <div class="message-avatar">${avatar}</div>
+    <div class="message-body">
+      <div class="message-bubble">
+        <p class="message-text">${escapeHTML(content)}</p>
+        ${role === 'assistant' ? `<button class="speak-btn" data-content="${escapeAttr(content)}" title="Read aloud">🔊</button>` : ''}
+      </div>
+      <span class="message-time">${time}</span>
+    </div>`;
+
+  container.appendChild(el);
+  requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
+  return el;
+}
+
+export function showTypingIndicator() {
+  const container = document.getElementById('chat-messages');
+  if (!container || document.getElementById('typing-indicator')) return;
+  const el = document.createElement('div');
+  el.id = 'typing-indicator';
+  el.className = 'message message--assistant';
+  el.innerHTML = `
+    <div class="message-avatar">🤵</div>
+    <div class="message-body">
+      <div class="message-bubble">
+        <div class="typing-dots"><span></span><span></span><span></span></div>
+      </div>
+    </div>`;
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+}
+
+export function hideTypingIndicator() {
+  document.getElementById('typing-indicator')?.remove();
+}
+
+// ── Voice UI ─────────────────────────────────────────────────
 export function setVoiceState(state) {
-  // state: 'idle' | 'listening' | 'speaking' | 'processing'
-  const voiceBtn = document.getElementById('voice-btn');
-  const voiceStatus = document.getElementById('voice-status');
-  const voiceWave = document.getElementById('voice-wave');
-
-  if (!voiceBtn) return;
-
-  voiceBtn.dataset.state = state;
-  voiceBtn.className = `voice-btn voice-btn--${state}`;
-
-  const statusMessages = {
-    idle: 'Click to speak',
-    listening: 'Listening...',
-    speaking: 'Interviewer speaking...',
-    processing: 'Processing...'
-  };
-
-  if (voiceStatus) voiceStatus.textContent = statusMessages[state] || '';
-  if (voiceWave) voiceWave.classList.toggle('active', state === 'listening' || state === 'speaking');
+  const btn = document.getElementById('voice-btn');
+  const status = document.getElementById('voice-status');
+  const wave = document.getElementById('voice-wave');
+  if (!btn) return;
+  btn.className = `voice-btn voice-btn--${state}`;
+  const labels = { idle: 'Click to speak', listening: 'Listening…', speaking: 'Interviewer speaking…', processing: 'Processing…' };
+  if (status) status.textContent = labels[state] || '';
+  if (wave) wave.classList.toggle('active', state === 'listening' || state === 'speaking');
 }
 
 export function updateVoiceTranscript(text) {
   const el = document.getElementById('voice-interim-text');
-  if (el) {
-    el.textContent = text || '';
-    el.style.display = text ? 'block' : 'none';
+  if (el) { el.textContent = text || ''; el.style.display = text ? 'block' : 'none'; }
+}
+
+// ── Live Sidebar Updates ─────────────────────────────────────
+// Called after each user answer to give a "live feel" in the sidebar
+// Uses simple heuristics since we don't run a real-time model per message
+export function updateLiveSidebar(transcript) {
+  const userMsgs = transcript.filter(m => m.role === 'user');
+  if (userMsgs.length === 0) return;
+
+  // Simple keyword-based sentiment for live updates (full analysis uses Gemini)
+  const allText = userMsgs.map(m => m.content).join(' ').toLowerCase();
+  const wordCount = allText.split(/\s+/).length;
+
+  const confidentWords  = ['experience','achieved','led','built','improved','successfully','managed','implemented','delivered','created','designed'];
+  const nervousWords    = ['um','uh','hmm','i think','i guess','maybe','not sure','i dont know','sorry','apologize'];
+  const enthusiastWords = ['passionate','love','enjoy','excited','amazing','great','really','definitely','absolutely'];
+
+  const score = (words) => words.filter(w => allText.includes(w)).length;
+
+  const confScore  = Math.min(100, 30 + score(confidentWords)  * 10 + Math.min(30, wordCount / 5));
+  const nervScore  = Math.max(0,  40 - score(nervousWords) * 8 + score(nervousWords) * 12);
+  const enthScore  = Math.min(100, 20 + score(enthusiastWords) * 12);
+
+  // Clamp
+  const conf  = Math.round(Math.min(100, confScore));
+  const nerv  = Math.round(Math.min(100, Math.max(0, nervScore)));
+  const enth  = Math.round(Math.min(100, enthScore));
+
+  // Dominant emotion
+  const dominant = conf >= enth ? (conf >= 60 ? 'Confident' : 'Neutral') : 'Enthusiastic';
+
+  // Update ring
+  const ring = document.getElementById('ering-fill');
+  if (ring) {
+    const pct = conf;
+    const circumference = 2 * Math.PI * 50;
+    ring.style.strokeDashoffset = circumference - (pct / 100) * circumference;
+    ring.style.stroke = pct >= 65 ? '#22C55E' : pct >= 45 ? '#F59E0B' : '#F43F5E';
+  }
+  setText('ering-pct', `${conf}%`);
+  setText('emotion-live-label', dominant);
+
+  // Bars
+  setBar('ebar-confident', conf);   setText('eval-confident',   `${conf}%`);
+  setBar('ebar-nervous',   nerv);   setText('eval-nervous',     `${nerv}%`);
+  setBar('ebar-enthusiastic', enth); setText('eval-enthusiastic', `${enth}%`);
+
+  // Strength estimates
+  const avgWords = wordCount / userMsgs.length;
+  const overallStr = Math.round(Math.min(100, 40 + avgWords * 1.5 + conf * 0.3));
+  const clarityStr = Math.round(Math.min(100, 50 + conf * 0.4 - nerv * 0.2));
+  const relevStr   = Math.round(Math.min(100, 45 + score(confidentWords) * 8));
+
+  setText('live-strength-overall',   `${overallStr}%`);
+  setText('live-strength-clarity',   `${clarityStr}%`);
+  setText('live-strength-relevance', `${relevStr}%`);
+
+  // Show a quick tip after 2+ answers
+  if (userMsgs.length >= 2) {
+    const tipCard = document.getElementById('live-tip-card');
+    const tipText = document.getElementById('live-tip-text');
+    if (tipCard && tipText) {
+      const tips = nerv > 50
+        ? 'Try to slow down and breathe before answering. Confidence comes through in your pace.'
+        : avgWords < 30
+        ? 'Try to expand your answers with specific examples using the STAR method.'
+        : conf >= 65
+        ? 'Great confidence! Keep including measurable results in your answers.'
+        : 'Use concrete numbers and outcomes to strengthen your answers.';
+      tipText.textContent = tips;
+      tipCard.style.display = 'block';
+    }
   }
 }
 
-// ─── Loading / Error States ───────────────────────────────────────────────────
-
+// ── Toast ────────────────────────────────────────────────────
 export function showToast(message, type = 'info', duration = 3000) {
-  const existing = document.getElementById('toast');
-  if (existing) existing.remove();
-
+  document.getElementById('toast')?.remove();
   const toast = document.createElement('div');
   toast.id = 'toast';
   toast.className = `toast toast--${type}`;
-  toast.innerHTML = `
-    <span class="toast-icon">${type === 'error' ? '⚠️' : type === 'success' ? '✅' : 'ℹ️'}</span>
-    <span class="toast-text">${escapeHTML(message)}</span>
-  `;
-
+  toast.innerHTML = `<span>${type === 'error' ? '⚠️' : type === 'success' ? '✅' : 'ℹ️'}</span><span>${escapeHTML(message)}</span>`;
   document.body.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('toast--visible'));
-
   setTimeout(() => {
     toast.classList.remove('toast--visible');
     setTimeout(() => toast.remove(), 400);
   }, duration);
 }
 
-/**
- * Show the end session confirmation modal
- */
+// ── End Modal ────────────────────────────────────────────────
 export function showEndConfirmModal(onConfirm, onCancel) {
   const modal = document.getElementById('end-modal');
   if (!modal) return;
-
   modal.classList.add('modal--visible');
-
-  const confirmBtn = document.getElementById('modal-confirm-btn');
-  const cancelBtn = document.getElementById('modal-cancel-btn');
-
-  const handleConfirm = () => {
-    modal.classList.remove('modal--visible');
-    cleanup();
-    if (onConfirm) onConfirm();
-  };
-
-  const handleCancel = () => {
-    modal.classList.remove('modal--visible');
-    cleanup();
-    if (onCancel) onCancel();
-  };
-
+  const confirm = document.getElementById('modal-confirm-btn');
+  const cancel  = document.getElementById('modal-cancel-btn');
   const cleanup = () => {
-    confirmBtn.removeEventListener('click', handleConfirm);
-    cancelBtn.removeEventListener('click', handleCancel);
+    confirm.removeEventListener('click', doConfirm);
+    cancel.removeEventListener('click', doCancel);
   };
-
-  confirmBtn.addEventListener('click', handleConfirm);
-  cancelBtn.addEventListener('click', handleCancel);
+  const doConfirm = () => { modal.classList.remove('modal--visible'); cleanup(); onConfirm?.(); };
+  const doCancel  = () => { modal.classList.remove('modal--visible'); cleanup(); onCancel?.(); };
+  confirm.addEventListener('click', doConfirm);
+  cancel.addEventListener('click', doCancel);
 }
 
-// ─── Analysis Screen ──────────────────────────────────────────────────────────
-
+// ── Analysis Screen ──────────────────────────────────────────
 export function renderAnalysis(analysisData, metadata) {
   const { analysis } = analysisData || {};
-  if (!analysis) {
-    showToast('Failed to load analysis', 'error');
-    return;
-  }
+  if (!analysis) { showToast('Failed to load analysis', 'error'); return; }
 
-  // Overall score ring
-  setScoreRing('overall-score-ring', analysis.overallScore || 0);
-  setTextContent('overall-score-value', `${analysis.overallScore || 0}`);
-  setTextContent('readiness-level', analysis.readinessLevel || '—');
-  setTextContent('analysis-summary', analysis.summary || '');
-  setTextContent('top-tip', analysis.topTip || '');
+  // Score ring
+  setScoreRing(analysis.overallScore || 0);
+  setText('overall-score-value', analysis.overallScore || '—');
+  setText('readiness-level', analysis.readinessLevel || '—');
+  setText('analysis-summary', analysis.summary || '');
+  setText('top-tip', analysis.topTip || '');
+  setText('emotion-dominant', analysis.emotionAnalysis?.dominant || '—');
 
-  // Emotion analysis
-  if (analysis.emotionAnalysis) {
-    const em = analysis.emotionAnalysis;
-    setTextContent('emotion-dominant', em.dominant || '—');
-    renderEmotionBars(em);
+  // Badges
+  setText('analysis-job-title', metadata?.jobTitle || metadata?.interviewType || '');
+  setText('analysis-question-count-badge', `${metadata?.totalExchanges || 0} questions`);
+
+  // Emotion bars
+  if (analysis.emotionAnalysis?.breakdown) {
+    const b = analysis.emotionAnalysis.breakdown;
+    const labels = { confident:'💪 Confident', nervous:'😰 Nervous', enthusiastic:'🔥 Enthusiastic', analytical:'🧠 Analytical' };
+    document.getElementById('emotion-bars').innerHTML = Object.entries(b).map(([k,v]) => `
+      <div class="metric-bar">
+        <div class="metric-bar__header"><span>${labels[k]||k}</span><span class="metric-bar__value">${v}%</span></div>
+        <div class="metric-bar__track"><div class="metric-bar__fill" style="--target:${v}%"></div></div>
+      </div>`).join('');
   }
 
   // Answer strength bars
   if (analysis.answerStrength) {
-    const as = analysis.answerStrength;
-    renderStrengthBars(as);
+    const labels = { relevance:'🎯 Relevance', structure:'🏗️ Structure', specificity:'🔍 Specificity', communication:'🗣️ Communication' };
+    document.getElementById('strength-bars').innerHTML = Object.entries(analysis.answerStrength).map(([k,v]) => `
+      <div class="metric-bar">
+        <div class="metric-bar__header"><span>${labels[k]||k}</span><span class="metric-bar__value">${v}%</span></div>
+        <div class="metric-bar__track"><div class="metric-bar__fill" style="--target:${v}%"></div></div>
+      </div>`).join('');
   }
 
-  // Strengths list
-  renderStrengths(analysis.strengths || []);
+  // Strengths
+  document.getElementById('strengths-list').innerHTML =
+    (analysis.strengths || []).map(s => `<li class="strength-item"><span class="strength-check">✓</span>${escapeHTML(s)}</li>`).join('') || '<li>No specific strengths noted.</li>';
 
-  // Improvements list
-  renderImprovements(analysis.improvements || []);
+  // Improvements
+  document.getElementById('improvements-list').innerHTML =
+    (analysis.improvements || []).map(imp => `
+      <div class="improvement-card">
+        <div class="improvement-area">${escapeHTML(imp.area||'')}</div>
+        <div class="improvement-issue">⚠️ ${escapeHTML(imp.issue||'')}</div>
+        <div class="improvement-suggestion">💡 ${escapeHTML(imp.suggestion||'')}</div>
+      </div>`).join('') || '<p>No improvements flagged.</p>';
 
-  // Question-by-question feedback
-  renderQuestionFeedback(analysis.questionFeedback || []);
-
-  // Metadata
-  setTextContent('analysis-job-title', metadata?.jobTitle || metadata?.interviewType || '');
-  setTextContent('analysis-question-count', metadata?.totalExchanges || 0);
+  // Q&A feedback
+  document.getElementById('question-feedback-list').innerHTML =
+    (analysis.questionFeedback || []).map((item, i) => `
+      <div class="qf-card">
+        <div class="qf-header">
+          <span class="qf-num">Q${i+1}</span>
+          <span class="qf-score qf-score--${scoreClass(item.score)}">${item.score}/100</span>
+        </div>
+        <div class="qf-question">❓ ${escapeHTML(item.question||'')}</div>
+        <div class="qf-answer">💬 ${escapeHTML(item.answer||'')}</div>
+        <div class="qf-feedback">📝 ${escapeHTML(item.feedback||'')}</div>
+      </div>`).join('');
 }
 
-function setScoreRing(id, score) {
-  const ring = document.getElementById(id);
-  if (!ring) return;
-  const circle = ring.querySelector('.score-ring__fill');
-  if (!circle) return;
-  const radius = 54;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (score / 100) * circumference;
-  circle.style.strokeDasharray = circumference;
-  circle.style.strokeDashoffset = offset;
-
-  // Color based on score
-  const color = score >= 75 ? '#4ECDC4' : score >= 50 ? '#FFD93D' : '#FF6B6B';
-  circle.style.stroke = color;
+function setScoreRing(score) {
+  const fill = document.querySelector('#overall-score-ring .sring-fill');
+  if (!fill) return;
+  const r = 58, circ = 2 * Math.PI * r;
+  fill.style.strokeDasharray = circ;
+  fill.style.strokeDashoffset = circ - (score / 100) * circ;
+  fill.style.stroke = score >= 75 ? '#22C55E' : score >= 50 ? '#F59E0B' : '#F43F5E';
 }
 
-function renderEmotionBars(em) {
-  const container = document.getElementById('emotion-bars');
-  if (!container || !em.breakdown) return;
-
-  const labels = { confident: '💪 Confident', nervous: '😰 Nervous', enthusiastic: '🔥 Enthusiastic', analytical: '🧠 Analytical' };
-
-  container.innerHTML = Object.entries(em.breakdown).map(([key, val]) => `
-    <div class="metric-bar">
-      <div class="metric-bar__header">
-        <span>${labels[key] || key}</span>
-        <span class="metric-bar__value">${val}%</span>
-      </div>
-      <div class="metric-bar__track">
-        <div class="metric-bar__fill" style="--target: ${val}%"></div>
-      </div>
-    </div>
-  `).join('');
+export function triggerAnalysisAnimations() {
+  setTimeout(() => {
+    document.querySelectorAll('.metric-bar__fill').forEach(b => {
+      b.style.width = b.style.getPropertyValue('--target') || '0%';
+    });
+  }, 250);
 }
 
-function renderStrengthBars(as) {
-  const container = document.getElementById('strength-bars');
-  if (!container) return;
-
-  const labels = {
-    relevance: '🎯 Relevance',
-    structure: '🏗️ Structure',
-    specificity: '🔍 Specificity',
-    communication: '🗣️ Communication'
-  };
-
-  container.innerHTML = Object.entries(as).map(([key, val]) => `
-    <div class="metric-bar">
-      <div class="metric-bar__header">
-        <span>${labels[key] || key}</span>
-        <span class="metric-bar__value">${val}%</span>
-      </div>
-      <div class="metric-bar__track">
-        <div class="metric-bar__fill" style="--target: ${val}%"></div>
-      </div>
-    </div>
-  `).join('');
-}
-
-function renderStrengths(strengths) {
-  const container = document.getElementById('strengths-list');
-  if (!container) return;
-  container.innerHTML = strengths.map(s => `
-    <li class="strength-item"><span class="strength-check">✓</span>${escapeHTML(s)}</li>
-  `).join('') || '<li>No specific strengths identified.</li>';
-}
-
-function renderImprovements(improvements) {
-  const container = document.getElementById('improvements-list');
-  if (!container) return;
-  container.innerHTML = improvements.map(imp => `
-    <div class="improvement-card">
-      <div class="improvement-area">${escapeHTML(imp.area || '')}</div>
-      <div class="improvement-issue">⚠️ ${escapeHTML(imp.issue || '')}</div>
-      <div class="improvement-suggestion">💡 ${escapeHTML(imp.suggestion || '')}</div>
-    </div>
-  `).join('') || '<p>No improvements suggested.</p>';
-}
-
-function renderQuestionFeedback(feedbackList) {
-  const container = document.getElementById('question-feedback-list');
-  if (!container) return;
-  container.innerHTML = feedbackList.map((item, i) => `
-    <div class="qf-card">
-      <div class="qf-header">
-        <span class="qf-num">Q${i + 1}</span>
-        <span class="qf-score qf-score--${getScoreClass(item.score)}">${item.score}/100</span>
-      </div>
-      <div class="qf-question">❓ ${escapeHTML(item.question || '')}</div>
-      <div class="qf-answer">💬 ${escapeHTML(item.answer || '')}</div>
-      <div class="qf-feedback">📝 ${escapeHTML(item.feedback || '')}</div>
-    </div>
-  `).join('');
-}
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
-
-function setTextContent(id, text) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = text;
-}
-
-function getScoreClass(score) {
-  if (score >= 75) return 'good';
-  if (score >= 50) return 'ok';
-  return 'poor';
-}
+// ── Helpers ──────────────────────────────────────────────────
+function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function setBar(id, pct)  { const el = document.getElementById(id); if (el) el.style.width = pct + '%'; }
+function scoreClass(s)    { return s >= 75 ? 'good' : s >= 50 ? 'ok' : 'poor'; }
 
 function escapeHTML(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+function escapeAttr(str) {
+  return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
 export { escapeHTML };
