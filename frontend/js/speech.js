@@ -142,10 +142,11 @@ export async function startListening(onTranscript, onEnd, onError) {
     // Web Speech API failed in a previous session (or unsupported browser) —
     // go straight to Whisper, skip the 2-retry wait entirely.
     console.log('[STT] Using Whisper directly (Web Speech API unavailable/failed)');
-    setTimeout(() => _startWhisperListening(), 100);
+    if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
+    setTimeout(() => _startWhisperListening(), 0);
   } else {
     // Probe Web Speech API. It will self-demote to Whisper after 2 network errors.
-    setTimeout(() => _startRecognition(SR), 250);
+    setTimeout(() => _startRecognition(SR), 0);
   }
 }
 
@@ -162,7 +163,7 @@ let vadAudioCtx    = null; // Web Audio context for voice activity detection
 // 12 was too low — room noise alone set hasSpeech=true before any speech.
 const VAD_SILENCE_THRESHOLD  = 10;   // RMS below this = silence
 const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = real speech (raised from 12)
-const VAD_SPEECH_SUSTAIN_MS  = 250;  // speech must sustain this long before hasSpeech=true
+const VAD_SPEECH_SUSTAIN_MS  = 120;  // speech must sustain this long before hasSpeech=true
 const VAD_SILENCE_MS         = 1800; // ms of silence after speech before we stop
 const VAD_MAX_MS             = 45000; // safety cap: stop after 45 s regardless
 const VAD_MIN_MS             = 600;   // don't stop before 600 ms (avoid clipping first word)
@@ -275,7 +276,7 @@ function _startWhisperListening() {
     let speechOnSince  = null; // when loud audio first appeared (sustain check)
     let silenceStart   = null;
     let vadRunning     = true;
-    const VAD_STARTUP_GRACE_MS = 800; // ignore audio for first 800ms — prevents transition noise from triggering hasSpeech
+    const VAD_STARTUP_GRACE_MS = 200; // ignore audio for first 200ms — prevents transition noise from triggering hasSpeech
 
     const tick = () => {
       if (!vadRunning || !whisperActive || !isListening) return;
@@ -305,6 +306,8 @@ function _startWhisperListening() {
         // breath/click/noise-spike from prematurely starting the silence timer
         if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
           hasSpeech = true;
+          // Immediately tell the user their voice is being picked up
+          if (onTranscriptCb) onTranscriptCb('🎙️ Got you, keep going…', false);
         }
         silenceStart = null;
       } else {
@@ -344,7 +347,7 @@ function _startWhisperListening() {
     }, 8000);
   }
 
-  mediaRecorder.start(200); // collect chunks every 200 ms for smoother onstop data
+  mediaRecorder.start(50); // collect chunks every 50 ms for faster onstop data
 }
 
 // Track whether the current recognition instance was intentionally stopped by us
@@ -382,10 +385,9 @@ function _startRecognition(SR) {
   rec.maxAlternatives = 1;
 
   rec.onstart = () => {
-    // Do NOT reset networkRetries here — it fires on every restart, which
-    // previously caused the counter to stay at 1 forever and never reach
-    // MAX_NETWORK_RETRIES, creating an infinite network-error retry loop.
     console.log('[STT] Recognition started');
+    // Immediate visual feedback so user knows mic is active
+    if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
   };
 
   rec.onresult = (event) => {
@@ -404,7 +406,8 @@ function _startRecognition(SR) {
     if (final_) fullTranscript += final_ + ' ';
 
     const display = (fullTranscript + interim).trim();
-    if (onTranscriptCb) onTranscriptCb(display, false);
+    // Only show the placeholder if nothing has been heard yet
+    if (onTranscriptCb) onTranscriptCb(display || '🎙️ Listening…', false);
 
     // Reset silence timer on every speech event
     clearTimeout(silenceTimer);
@@ -455,7 +458,7 @@ function _startRecognition(SR) {
         setTimeout(() => {
           if (!isListening || useWhisperFallback) return; // guard stale timers
           _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
-        }, 900 * networkRetries);
+        }, 400 * networkRetries);
         return;
       }
       // Persistent network failures → switch to Whisper for this mic-press session
