@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BUSimInt — AI Interview Simulator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./css/main.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙</text></svg>">
+  <link rel="icon" href="./BUSimInt_Logo.png">
 </head>
 <body>
 
@@ -16,7 +16,9 @@
   <div class="login-left">
     <div class="login-left-content">
       <div class="login-brand">
-        <div class="login-brand-icon">🎙</div>
+        <div class="login-brand-icon">
+          <img src="./BUSimInt_Logo.png" alt="BUSimInt Logo" style="width:100%;height:100%;object-fit:contain;">
+        </div>
         <span class="login-brand-name">BUSimInt</span>
       </div>
       <h1 class="login-headline">Ace your next<br><em>interview.</em></h1>
@@ -105,7 +107,7 @@
         <div class="chat-panel">
           <header class="chat-header">
             <div class="chat-header-left">
-              <span class="chat-logo">🎙</span>
+              <img src="./BUSimInt_Logo.png" alt="BUSimInt" class="chat-logo-img">
               <div>
                 <div class="chat-title">Interview Practice Chat</div>
                 <div class="chat-sub" id="interview-type-badge">—</div>
@@ -126,7 +128,15 @@
             <div class="voice-wave" id="voice-wave">
               <span></span><span></span><span></span><span></span><span></span>
             </div>
-            <button id="voice-btn" class="voice-btn voice-btn--idle">🎙</button>
+            <button id="voice-btn" class="voice-btn voice-btn--idle" aria-label="Click to speak">
+              <!-- Mic icon — simple B&W SVG -->
+              <svg class="voice-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3"/>
+                <path d="M5 10a7 7 0 0014 0"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+                <line x1="9" y1="22" x2="15" y2="22"/>
+              </svg>
+            </button>
             <p id="voice-status" class="voice-status">Click to speak</p>
             <p id="voice-interim-text" class="voice-interim"></p>
           </div>
@@ -255,7 +265,9 @@
 <!-- Modal -->
 <div id="end-modal" class="modal-overlay" role="dialog" aria-modal="true">
   <div class="modal-box">
-    <div class="modal-icon">🏁</div>
+    <div class="modal-icon">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
+    </div>
     <h2 class="modal-title">End this interview?</h2>
     <p class="modal-body">This will end the simulation and generate your full performance analysis.</p>
     <div class="modal-actions">

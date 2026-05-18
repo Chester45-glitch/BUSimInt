@@ -47,7 +47,9 @@ export async function renderSidebar(onSelectSession, onNewChat) {
   sidebar.innerHTML = `
     <div class="sidebar-header">
       <div class="sidebar-brand">
-        <span class="sidebar-brand-icon">🎙</span>
+        <div class="sidebar-brand-icon">
+          <img src="./BUSimInt_Logo.png" alt="BUSimInt">
+        </div>
         <span class="sidebar-brand-name">BUSimInt</span>
       </div>
       <button class="sidebar-new-btn" id="sidebar-new-btn" title="New Interview">
@@ -57,7 +59,7 @@ export async function renderSidebar(onSelectSession, onNewChat) {
       </button>
     </div>
 
-    <div class="sidebar-section-label">Your Interviews</div>
+    <div class="sidebar-section-label">Interviews</div>
 
     <div class="sidebar-sessions" id="sidebar-sessions">
       <div class="sidebar-loading">
@@ -117,10 +119,51 @@ function renderSessionList(sessions, onSelect) {
     </div>
   `).join('');
 
-  // Bind clicks
+  // Bind clicks and menus
   container.querySelectorAll('.sidebar-session-item').forEach(el => {
-    el.addEventListener('click', () => onSelect(el.dataset.id));
+    // Click on item (not on the 3-dot btn) → load session
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.session-menu-btn') || e.target.closest('.session-dropdown')) return;
+      onSelect(el.dataset.id);
+    });
+
+    // 3-dot menu toggle
+    const menuBtn = el.querySelector('.session-menu-btn');
+    const dropdown = el.querySelector('.session-dropdown');
+    if (menuBtn && dropdown) {
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Close other open dropdowns
+        document.querySelectorAll('.session-dropdown.open').forEach(d => {
+          if (d !== dropdown) d.classList.remove('open');
+        });
+        dropdown.classList.toggle('open');
+      });
+    }
+
+    // Delete item
+    const deleteBtn = el.querySelector('.session-delete-btn');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        dropdown?.classList.remove('open');
+        if (!confirm('Delete this interview session?')) return;
+        await deleteSession(el.dataset.id);
+        el.closest('.sidebar-group')?.querySelector('.sidebar-session-item') === el
+          ? el.closest('.sidebar-group').style.display = 'none'
+          : null;
+        el.remove();
+        // If group is now empty, remove it
+        const group = el.closest?.('.sidebar-group');
+        if (group && group.querySelectorAll('.sidebar-session-item').length === 0) group.remove();
+      });
+    }
   });
+
+  // Close dropdowns on outside click
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.session-dropdown.open').forEach(d => d.classList.remove('open'));
+  }, { once: false });
 }
 
 function renderSessionItem(session) {
@@ -131,18 +174,39 @@ function renderSessionItem(session) {
     ? `<span class="session-status-dot"></span>`
     : '';
 
-  const icon = getTypeIcon(session.interview_type);
-
   return `
     <div class="sidebar-session-item" data-id="${session.id}">
-      <span class="session-icon">${icon}</span>
       <div class="session-info">
         <span class="session-title">${escHTML(session.title || session.interview_type)}</span>
-        <span class="session-date">${timeAgo(session.created_at)}</span>
       </div>
       ${scoreBadge}
+      <button class="session-menu-btn" title="Options">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+        </svg>
+        <div class="session-dropdown">
+          <div class="session-dropdown-item session-delete-btn danger">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            Delete
+          </div>
+        </div>
+      </button>
     </div>
   `;
+}
+
+// ── Delete session ────────────────────────────────────────────
+async function deleteSession(sessionId) {
+  const user = getUser();
+  if (!user) return;
+  try {
+    await fetch(`${Config.API_BASE_URL}/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: { 'x-user-id': user.id }
+    });
+  } catch (e) {
+    console.warn('[History] Delete failed:', e.message);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────

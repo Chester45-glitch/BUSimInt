@@ -26,6 +26,292 @@ function browserSpeak(text, onStart, onEnd) {
   utterance.rate = 0.92;
   utterance.pitch = 1;
 
+  const pickVoice = () => {
+    const voices = window.speechSynthesis.getVoices();
+    return voices.find(v =>
+      v.name.includes('Google US English') ||
+      v.name.includes('Microsoft Mark')    ||
+      v.name.includes('Daniel')            ||
+      (v.lang.startsWith('en') && v.localService)
+    ) || voices.find(v => v.lang.startsWith('en')) || null;
+  };
+
+  const voice = pickVoice();
+  if (voice) utterance.voice = voice;
+
+  utterance.onstart = () => { isSpeaking = true;  if (onStart) onStart(); };
+  utterance.onend   = () => { isSpeaking = false; if (onEnd)   onEnd();   };
+  utterance.onerror = (e) => {
+    // 'interrupted' is normal when we cancel — not a real error
+    if (e.error !== 'interrupted' && e.error !== 'canceled') {
+      console.warn('[TTS] utterance error:', e.error);
+    }
+    isSpeaking = false;
+    if (onEnd) onEnd();
+  };
+
+  if (window.speechSynthesis.getVoices().length === 0) {
+    window.speechSynthesis.onvoiceschanged = () => {
+      const v = pickVoice();
+      if (v) utterance.voice = v;
+      window.speechSynthesis.speak(utterance);
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  } else {
+    window.speechSynthesis.speak(utterance);
+  }
+}
+
+export function stopSpeaking() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = '';
+    currentAudio = null;
+  }
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  isSpeaking = false;
+}
+
+export function getIsSpeaking() { return isSpeaking; }
+
+// ── Speech Recognition ────────────────────────────────────────
+// Strategy:
+// 1. Request mic permission ONCE up front and keep the stream alive.
+// 2. Use short-session recognition (continuous: false) to avoid network timeouts.
+// 3. On network error: retry with exponential back-off.
+// 4. On 'aborted': silently restart (we triggered it).
+
+let recognition   = null;
+let silenceTimer  = null;
+let isListening   = false;
+let fullTranscript = '';
+let onTranscriptCb = null;
+let onEndCb        = null;
+let onErrorCb      = null;
+let networkRetries = 0;
+let micStream      = null; // Keep mic stream alive to prevent network errors
+const MAX_NETWORK_RETRIES = 5;
+
+export function isSpeechRecognitionSupported() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+// Request mic permission first to warm up the audio pipeline
+async function ensureMicPermission() {
+  if (micStream) return true;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    console.log('[STT] Microphone permission granted, stream active');
+    return true;
+  } catch (err) {
+    console.error('[STT] Mic permission denied:', err.message);
+    return false;
+  }
+}
+
+export async function startListening(onTranscript, onEnd, onError) {
+  if (isListening) stopListening();
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    if (onError) onError('Speech recognition is not supported. Please use Chrome or Edge.');
+    return;
+  }
+
+  // Warm up mic — this prevents the network error caused by cold-starting the audio pipeline
+  const permitted = await ensureMicPermission();
+  if (!permitted) {
+    if (onError) onError('Microphone access denied. Please allow microphone in browser settings.');
+    return;
+  }
+
+  onTranscriptCb = onTranscript;
+  onEndCb        = onEnd;
+  onErrorCb      = onError;
+  fullTranscript = '';
+  networkRetries = 0;
+  isListening    = true;
+
+  // Small delay to let the audio pipeline stabilize after getUserMedia
+  setTimeout(() => _startRecognition(SR), 250);
+}
+
+function _startRecognition(SR) {
+  if (!isListening) return;
+
+  try {
+    recognition = new SR();
+  } catch (e) {
+    if (onErrorCb) onErrorCb('Could not initialise microphone: ' + e.message);
+    return;
+  }
+
+  recognition.lang            = Config.SPEECH.LANG;
+  recognition.continuous      = false;  // short sessions avoid network timeouts
+  recognition.interimResults  = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    networkRetries = 0; // reset on successful start
+    console.log('[STT] Recognition started');
+  };
+
+  recognition.onresult = (event) => {
+    let interim = '';
+    let final_  = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const r = event.results[i];
+      if (r.isFinal) final_ += r[0].transcript;
+      else           interim += r[0].transcript;
+    }
+
+    if (final_) fullTranscript += final_ + ' ';
+
+    const display = (fullTranscript + interim).trim();
+    if (onTranscriptCb) onTranscriptCb(display, false);
+
+    // Reset silence timer
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      if (fullTranscript.trim() && isListening) {
+        const result = fullTranscript.trim();
+        isListening = false;
+        clearTimeout(silenceTimer);
+        if (onTranscriptCb) onTranscriptCb(result, true);
+        if (onEndCb) onEndCb(result);
+      }
+    }, Config.SPEECH.SILENCE_TIMEOUT_MS);
+  };
+
+  recognition.onerror = (event) => {
+    const err = event.error;
+    console.warn('[STT] error:', err);
+
+    if (err === 'no-speech') {
+      // Normal — restart to keep listening
+      return;
+    }
+
+    if (err === 'aborted') {
+      // We triggered this via stop() — ignore
+      return;
+    }
+
+    if (err === 'network') {
+      networkRetries++;
+      console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
+      if (networkRetries <= MAX_NETWORK_RETRIES && isListening) {
+        // Re-acquire mic stream on retry to reset audio pipeline
+        if (networkRetries > 2) {
+          micStream?.getTracks().forEach(t => t.stop());
+          micStream = null;
+          setTimeout(async () => {
+            if (!isListening) return;
+            await ensureMicPermission();
+            setTimeout(() => {
+              if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+            }, 300);
+          }, 800 * networkRetries);
+        } else {
+          setTimeout(() => {
+            if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+          }, 600 * networkRetries);
+        }
+        return;
+      }
+      isListening = false;
+      clearTimeout(silenceTimer);
+      if (onErrorCb) onErrorCb('Microphone network error. Ensure Chrome/Edge is used on HTTPS. Try refreshing and allowing mic access again.');
+      return;
+    }
+
+    if (err === 'not-allowed' || err === 'permission-denied') {
+      isListening = false;
+      clearTimeout(silenceTimer);
+      if (onErrorCb) onErrorCb('Microphone access denied. Please allow microphone access in your browser settings.');
+      return;
+    }
+
+    // Any other error — restart if still listening
+    if (isListening) {
+      setTimeout(() => {
+        if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+      }, 500);
+    }
+  };
+
+  recognition.onend = () => {
+    // Auto-restart while still listening and silence timer hasn't fired
+    if (isListening) {
+      setTimeout(() => {
+        if (isListening) {
+          _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+        }
+      }, 150);
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (err) {
+    console.error('[STT] start() failed:', err);
+    // InvalidStateError = already started — retry after brief pause
+    if (err.name === 'InvalidStateError') {
+      setTimeout(() => {
+        if (isListening) _startRecognition(SR);
+      }, 400);
+    } else {
+      if (onErrorCb) onErrorCb('Could not start microphone: ' + err.message);
+    }
+  }
+}
+
+export function stopListening() {
+  isListening = false;
+  clearTimeout(silenceTimer);
+  onTranscriptCb = null;
+  onEndCb        = null;
+  onErrorCb      = null;
+  fullTranscript = '';
+
+  if (recognition) {
+    try {
+      recognition.onend  = null;
+      recognition.onerror = null;
+      recognition.stop();
+    } catch (e) { /* ignore */ }
+    recognition = null;
+  }
+}
+
+export function getIsListening() { return isListening; }
+
+// ── Text to Speech ────────────────────────────────────────────
+let currentAudio = null;
+let isSpeaking = false;
+
+export async function speakText(text, onStart, onEnd) {
+  stopSpeaking();
+  if (!text || !text.trim()) { if (onEnd) onEnd(); return; }
+  browserSpeak(text, onStart, onEnd);
+}
+
+function browserSpeak(text, onStart, onEnd) {
+  if (!window.speechSynthesis) {
+    console.warn('[Speech] Browser TTS not supported');
+    if (onEnd) onEnd();
+    return;
+  }
+
+  // Cancel any pending utterances
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = Config.SPEECH.LANG;
+  utterance.rate = 0.92;
+  utterance.pitch = 1;
+
   // Pick best available voice
   const pickVoice = () => {
     const voices = window.speechSynthesis.getVoices();

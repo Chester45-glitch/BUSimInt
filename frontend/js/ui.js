@@ -68,7 +68,9 @@ export function setInterviewHeader(config) {
   const modeBadge = document.getElementById('interview-mode-badge');
   if (badge) badge.textContent = config.jobTitle || config.type;
   if (modeBadge) {
-    modeBadge.textContent = config.mode === 'voice' ? '🎙️ Voice Mode' : '💬 Chat Mode';
+    modeBadge.innerHTML = config.mode === 'voice'
+      ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg> Voice Mode`
+      : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> Chat Mode`;
   }
 }
 
@@ -79,15 +81,17 @@ export function appendMessage(role, content, animate = true) {
   const el = document.createElement('div');
   el.className = `message message--${role}`;
 
-  const avatar = role === 'assistant' ? '🤵' : '👤';
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const avatar = role === 'assistant'
+    ? `<img src="./BUSimInt_Logo.png" alt="AI" style="width:100%;height:100%;object-fit:contain;border-radius:50%;">`
+    : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>`;
 
   el.innerHTML = `
     <div class="message-avatar">${avatar}</div>
     <div class="message-body">
       <div class="message-bubble">
         <p class="message-text">${escapeHTML(content)}</p>
-        ${role === 'assistant' ? `<button class="speak-btn" data-content="${escapeAttr(content)}" title="Read aloud">🔊</button>` : ''}
+        ${role === 'assistant' ? `<button class="speak-btn" data-content="${escapeAttr(content)}" title="Read aloud"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg></button>` : ''}
       </div>
       <span class="message-time">${time}</span>
     </div>`;
@@ -104,7 +108,7 @@ export function showTypingIndicator() {
   el.id = 'typing-indicator';
   el.className = 'message message--assistant';
   el.innerHTML = `
-    <div class="message-avatar">🤵</div>
+    <div class="message-avatar"><img src="./BUSimInt_Logo.png" alt="AI" style="width:100%;height:100%;object-fit:contain;border-radius:50%;"></div>
     <div class="message-body">
       <div class="message-bubble">
         <div class="typing-dots"><span></span><span></span><span></span></div>
@@ -133,6 +137,27 @@ export function setVoiceState(state) {
 export function updateVoiceTranscript(text) {
   const el = document.getElementById('voice-interim-text');
   if (el) { el.textContent = text || ''; el.style.display = text ? 'block' : 'none'; }
+}
+
+// ── Live Sidebar Reset ───────────────────────────────────────
+// Call when starting a new chat to clear inherited emotion data
+export function resetLiveSidebar() {
+  const ring = document.getElementById('ering-fill');
+  if (ring) {
+    const circumference = 2 * Math.PI * 50;
+    ring.style.strokeDashoffset = circumference;
+    ring.style.stroke = 'var(--accent)';
+  }
+  setText('ering-pct', '—');
+  setText('emotion-live-label', 'Confidence');
+  setBar('ebar-confident', 0);   setText('eval-confident',   '—');
+  setBar('ebar-nervous',   0);   setText('eval-nervous',     '—');
+  setBar('ebar-enthusiastic', 0); setText('eval-enthusiastic', '—');
+  setText('live-strength-overall',   '—');
+  setText('live-strength-clarity',   '—');
+  setText('live-strength-relevance', '—');
+  const tipCard = document.getElementById('live-tip-card');
+  if (tipCard) tipCard.style.display = 'none';
 }
 
 // ── Live Sidebar Updates ─────────────────────────────────────

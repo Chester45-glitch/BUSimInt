@@ -31,8 +31,8 @@ const Config = {
   ],
 
   MODES: [
-    { value: 'chat',  label: 'Chat Mode',  icon: '💬', desc: 'Type your responses' },
-    { value: 'voice', label: 'Voice Mode', icon: '🎙️', desc: 'Speak your responses' },
+    { value: 'chat',  label: 'Chat Mode',  icon: '✍', desc: 'Type your responses' },
+    { value: 'voice', label: 'Voice Mode', icon: '◎', desc: 'Speak your responses' },
   ],
 
   SPEECH: { LANG: 'en-US', SILENCE_TIMEOUT_MS: 2500 },

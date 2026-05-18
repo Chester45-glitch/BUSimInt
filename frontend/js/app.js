@@ -12,7 +12,7 @@ import {
   showSetupError, appendMessage, showTypingIndicator, hideTypingIndicator,
   setInterviewHeader, setVoiceState, updateVoiceTranscript,
   showToast, showEndConfirmModal, renderAnalysis, triggerAnalysisAnimations,
-  updateLiveSidebar
+  updateLiveSidebar, resetLiveSidebar
 } from './ui.js';
 
 // ── Init ─────────────────────────────────────────────────────
@@ -79,9 +79,10 @@ function setupGoogleButton() {
       theme: 'outline',
       size: 'large',
       text: 'continue_with',
+      locale: 'en',
       shape: 'rectangular',
       logo_alignment: 'left',
-      width: 320,
+      width: 360,
     }
   );
 }
@@ -117,6 +118,8 @@ function handleNewChat() {
   document.getElementById('chat-messages').innerHTML = '';
   const ta = document.getElementById('chat-input');
   if (ta) { ta.value = ''; ta.style.height = 'auto'; }
+  // Reset live sidebar emotion panels so previous session data doesn't bleed
+  resetLiveSidebar();
   showScreen('setup-screen');
   renderSetupScreen();
   document.querySelectorAll('.sidebar-session-item').forEach(el => el.classList.remove('active'));
@@ -157,6 +160,7 @@ async function handleLoadSession(sessionId) {
     // Active session — resume chat view
     document.getElementById('chat-messages').innerHTML = '';
     InterviewState.reset();
+    resetLiveSidebar();
     InterviewState.setConfig({
       type: session.interview_type,
       jobTitle: session.job_title,
@@ -223,6 +227,9 @@ async function handleStartInterview() {
     const data = await startInterview(InterviewState.config);
     InterviewState.startSession(data.sessionId);
     InterviewState.addMessage('assistant', data.message);
+
+    // Reset live sidebar for fresh session
+    resetLiveSidebar();
 
     setInterviewHeader(InterviewState.config);
     highlightActiveSession(data.sessionId);
