@@ -1,60 +1,16 @@
 // js/speech.js — Text-to-Speech and Speech-to-Text handling
-import { synthesizeSpeech } from './api.js';
 import Config from './config.js';
 
-// ─── Text to Speech ─────────────────────────────────────────────────────────
-
+// ── Text to Speech ────────────────────────────────────────────
 let currentAudio = null;
 let isSpeaking = false;
 
-/**
- * Speak text using Google TTS (via API) or browser fallback
- */
 export async function speakText(text, onStart, onEnd) {
-  // Stop any currently playing audio
   stopSpeaking();
-
-  if (!text || text.trim() === '') return;
-
-  try {
-    const result = await synthesizeSpeech(text);
-
-    if (result.useBrowserTTS) {
-      // Use browser's built-in speech synthesis as fallback
-      browserSpeak(text, onStart, onEnd);
-    } else {
-      // Play Google TTS audio
-      const audioBlob = base64ToBlob(result.audioContent, result.mimeType || 'audio/mpeg');
-      const audioUrl = URL.createObjectURL(audioBlob);
-      currentAudio = new Audio(audioUrl);
-
-      currentAudio.onplay = () => {
-        isSpeaking = true;
-        if (onStart) onStart();
-      };
-
-      currentAudio.onended = () => {
-        isSpeaking = false;
-        URL.revokeObjectURL(audioUrl);
-        if (onEnd) onEnd();
-      };
-
-      currentAudio.onerror = () => {
-        // Fallback to browser TTS if audio fails
-        browserSpeak(text, onStart, onEnd);
-      };
-
-      await currentAudio.play();
-    }
-  } catch (err) {
-    console.warn('[Speech] TTS API failed, using browser fallback:', err.message);
-    browserSpeak(text, onStart, onEnd);
-  }
+  if (!text || !text.trim()) { if (onEnd) onEnd(); return; }
+  browserSpeak(text, onStart, onEnd);
 }
 
-/**
- * Browser's native speech synthesis fallback
- */
 function browserSpeak(text, onStart, onEnd) {
   if (!window.speechSynthesis) {
     console.warn('[Speech] Browser TTS not supported');
@@ -62,182 +18,226 @@ function browserSpeak(text, onStart, onEnd) {
     return;
   }
 
+  // Cancel any pending utterances
+  window.speechSynthesis.cancel();
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = Config.SPEECH.LANG;
-  utterance.rate = 0.95;
+  utterance.rate = 0.92;
   utterance.pitch = 1;
 
-  // Prefer a clear, professional voice
-  const voices = window.speechSynthesis.getVoices();
-  const preferred = voices.find(v =>
-    v.name.includes('Google US English') ||
-    v.name.includes('Microsoft Mark') ||
-    v.name.includes('Daniel') ||
-    (v.lang === 'en-US' && !v.name.includes('Female'))
-  );
-  if (preferred) utterance.voice = preferred;
-
-  utterance.onstart = () => {
-    isSpeaking = true;
-    if (onStart) onStart();
+  // Pick best available voice
+  const pickVoice = () => {
+    const voices = window.speechSynthesis.getVoices();
+    return voices.find(v =>
+      v.name.includes('Google US English') ||
+      v.name.includes('Microsoft Mark')    ||
+      v.name.includes('Daniel')            ||
+      (v.lang.startsWith('en') && v.localService)
+    ) || voices.find(v => v.lang.startsWith('en')) || null;
   };
 
-  utterance.onend = () => {
+  const voice = pickVoice();
+  if (voice) utterance.voice = voice;
+
+  utterance.onstart = () => { isSpeaking = true;  if (onStart) onStart(); };
+  utterance.onend   = () => { isSpeaking = false; if (onEnd)   onEnd();   };
+  utterance.onerror = (e) => {
+    console.warn('[TTS] utterance error:', e.error);
     isSpeaking = false;
     if (onEnd) onEnd();
   };
 
-  utterance.onerror = () => {
-    isSpeaking = false;
-    if (onEnd) onEnd();
-  };
-
-  window.speechSynthesis.speak(utterance);
+  // Voices may not be loaded yet on first call
+  if (window.speechSynthesis.getVoices().length === 0) {
+    window.speechSynthesis.onvoiceschanged = () => {
+      const v = pickVoice();
+      if (v) utterance.voice = v;
+      window.speechSynthesis.speak(utterance);
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  } else {
+    window.speechSynthesis.speak(utterance);
+  }
 }
 
-/**
- * Stop any currently playing audio
- */
 export function stopSpeaking() {
   if (currentAudio) {
     currentAudio.pause();
     currentAudio.src = '';
     currentAudio = null;
   }
-  if (window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-  }
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
   isSpeaking = false;
 }
 
-export function getIsSpeaking() {
-  return isSpeaking;
-}
+export function getIsSpeaking() { return isSpeaking; }
 
-// ─── Speech Recognition ──────────────────────────────────────────────────────
+// ── Speech Recognition ────────────────────────────────────────
+// Fix for "network" error on HTTPS:
+// - Use continuous: false (avoid long-running sessions that time out)
+// - Restart manually after each result until stopListening() is called
+// - Treat "network" error as a restart signal, not a fatal failure
 
-let recognition = null;
-let silenceTimer = null;
-let isListening = false;
+let recognition   = null;
+let silenceTimer  = null;
+let isListening   = false;
+let fullTranscript = '';
+let onTranscriptCb = null;
+let onEndCb        = null;
+let onErrorCb      = null;
+let networkRetries = 0;
+const MAX_NETWORK_RETRIES = 3;
 
-/**
- * Check if speech recognition is supported
- */
 export function isSpeechRecognitionSupported() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 }
 
-/**
- * Start speech recognition
- * @param {function} onTranscript - Called with (text, isFinal)
- * @param {function} onEnd - Called when recognition ends
- * @param {function} onError - Called with error message
- */
 export function startListening(onTranscript, onEnd, onError) {
   if (isListening) stopListening();
 
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  if (!SpeechRecognition) {
-    if (onError) onError('Speech recognition is not supported in this browser. Please use Chrome.');
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    if (onError) onError('Speech recognition is not supported. Please use Chrome or Edge.');
     return;
   }
 
-  recognition = new SpeechRecognition();
-  recognition.lang = Config.SPEECH.LANG;
-  recognition.continuous = true;
-  recognition.interimResults = true;
+  // Store callbacks so restarts can reuse them
+  onTranscriptCb = onTranscript;
+  onEndCb        = onEnd;
+  onErrorCb      = onError;
+  fullTranscript = '';
+  networkRetries = 0;
+  isListening    = true;
+
+  _startRecognition(SR);
+}
+
+function _startRecognition(SR) {
+  if (!isListening) return;
+
+  try {
+    recognition = new SR();
+  } catch (e) {
+    if (onErrorCb) onErrorCb('Could not initialise microphone: ' + e.message);
+    return;
+  }
+
+  recognition.lang            = Config.SPEECH.LANG;
+  recognition.continuous      = false;  // ← key fix: false prevents network timeout
+  recognition.interimResults  = true;
   recognition.maxAlternatives = 1;
 
-  let fullTranscript = '';
-
   recognition.onstart = () => {
-    isListening = true;
-    fullTranscript = '';
+    networkRetries = 0; // reset on successful start
   };
 
   recognition.onresult = (event) => {
-    let interimText = '';
-    let finalText = '';
+    let interim = '';
+    let final_  = '';
 
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      if (result.isFinal) {
-        finalText += result[0].transcript;
-      } else {
-        interimText += result[0].transcript;
-      }
+      const r = event.results[i];
+      if (r.isFinal) final_ += r[0].transcript;
+      else           interim += r[0].transcript;
     }
 
-    if (finalText) {
-      fullTranscript += finalText + ' ';
-    }
+    if (final_) fullTranscript += final_ + ' ';
 
-    const displayText = fullTranscript + interimText;
-    if (onTranscript) onTranscript(displayText.trim(), false);
+    const display = (fullTranscript + interim).trim();
+    if (onTranscriptCb) onTranscriptCb(display, false);
 
     // Reset silence timer
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
-      if (fullTranscript.trim()) {
-        if (onTranscript) onTranscript(fullTranscript.trim(), true);
-        stopListening();
-        if (onEnd) onEnd(fullTranscript.trim());
+      if (fullTranscript.trim() && isListening) {
+        const result = fullTranscript.trim();
+        isListening = false;
+        clearTimeout(silenceTimer);
+        if (onTranscriptCb) onTranscriptCb(result, true);
+        if (onEndCb) onEndCb(result);
       }
     }, Config.SPEECH.SILENCE_TIMEOUT_MS);
   };
 
   recognition.onerror = (event) => {
-    isListening = false;
-    clearTimeout(silenceTimer);
+    console.warn('[STT] error:', event.error);
+
     if (event.error === 'no-speech') {
-      if (onEnd) onEnd('');
+      // Normal — just restart to keep listening
       return;
     }
-    if (onError) onError(`Microphone error: ${event.error}`);
+
+    if (event.error === 'network') {
+      // Network error: retry a few times before giving up
+      networkRetries++;
+      if (networkRetries <= MAX_NETWORK_RETRIES && isListening) {
+        console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
+        setTimeout(() => {
+          if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+        }, 1000 * networkRetries);
+        return;
+      }
+      // Exceeded retries — tell user
+      isListening = false;
+      clearTimeout(silenceTimer);
+      if (onErrorCb) onErrorCb('Microphone network error. Make sure you\'re using Chrome/Edge and the site is on HTTPS.');
+      return;
+    }
+
+    if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+      isListening = false;
+      clearTimeout(silenceTimer);
+      if (onErrorCb) onErrorCb('Microphone access denied. Please allow microphone access in your browser settings.');
+      return;
+    }
+
+    if (event.error === 'aborted') {
+      // We triggered this via stop() — ignore
+      return;
+    }
+
+    // Any other error
+    isListening = false;
+    clearTimeout(silenceTimer);
+    if (onErrorCb) onErrorCb(`Microphone error: ${event.error}`);
   };
 
   recognition.onend = () => {
+    // Restart automatically while still listening and silence timer hasn't fired
     if (isListening) {
-      // Restart if we stopped unexpectedly without manual stop
-      try { recognition.start(); } catch (e) { /* already stopped */ }
+      setTimeout(() => {
+        if (isListening) {
+          _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+        }
+      }, 100);
     }
   };
 
   try {
     recognition.start();
   } catch (err) {
-    if (onError) onError('Could not access microphone: ' + err.message);
+    console.error('[STT] start() failed:', err);
+    if (onErrorCb) onErrorCb('Could not start microphone: ' + err.message);
   }
 }
 
-/**
- * Stop speech recognition
- */
 export function stopListening() {
   isListening = false;
   clearTimeout(silenceTimer);
+  onTranscriptCb = null;
+  onEndCb        = null;
+  onErrorCb      = null;
+  fullTranscript = '';
 
   if (recognition) {
     try {
-      recognition.onend = null; // Prevent restart
+      recognition.onend  = null; // prevent auto-restart
+      recognition.onerror = null;
       recognition.stop();
     } catch (e) { /* ignore */ }
     recognition = null;
   }
 }
 
-export function getIsListening() {
-  return isListening;
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function base64ToBlob(base64, mimeType) {
-  const byteChars = atob(base64);
-  const byteNums = new Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) {
-    byteNums[i] = byteChars.charCodeAt(i);
-  }
-  return new Blob([new Uint8Array(byteNums)], { type: mimeType });
-}
+export function getIsListening() { return isListening; }
