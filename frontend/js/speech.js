@@ -90,8 +90,8 @@ let onEndCb        = null;
 let onErrorCb      = null;
 let networkRetries = 0;
 let micStream      = null; // Keep mic stream alive to prevent network errors
-let useWhisperFallback = false; // Switch to Whisper after repeated network failures
-const MAX_NETWORK_RETRIES = 3;
+let useWhisperFallback = sessionStorage.getItem('stt_use_whisper') === 'true'; // Switch to Whisper after repeated network failures
+const MAX_NETWORK_RETRIES = 2; // Switch to Whisper after 2 failures, not 3
 
 export function isSpeechRecognitionSupported() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition) || !!navigator.mediaDevices;
@@ -264,11 +264,16 @@ function _startRecognition(SR) {
   rec.maxAlternatives = 1;
 
   rec.onstart = () => {
-    networkRetries = 0;
+    // Do NOT reset networkRetries here — it fires on every restart, which
+    // previously caused the counter to stay at 1 forever and never reach
+    // MAX_NETWORK_RETRIES, creating an infinite network-error retry loop.
     console.log('[STT] Recognition started');
   };
 
   rec.onresult = (event) => {
+    // We got real speech — the connection is healthy, reset the error counter
+    networkRetries = 0;
+
     let interim = '';
     let final_  = '';
 
@@ -313,19 +318,20 @@ function _startRecognition(SR) {
     if (err === 'network') {
       networkRetries++;
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
-      if (networkRetries <= MAX_NETWORK_RETRIES && isListening) {
-        micStream?.getTracks().forEach(t => t.stop());
-        micStream = null;
-        setTimeout(async () => {
+      if (networkRetries < MAX_NETWORK_RETRIES && isListening) {
+        // Do NOT stop micStream here — tearing it down and requesting it again
+        // was causing repeated "permission granted" logs and an audio pipeline
+        // reset that triggered another network error immediately after.
+        setTimeout(() => {
           if (!isListening) return;
-          await ensureMicPermission();
-          if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+          _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
         }, 900 * networkRetries);
         return;
       }
       // Persistent network failures → switch to Whisper
-      console.log('[STT] Switching to Whisper fallback');
+      console.log('[STT] Switching to Whisper fallback after persistent network errors');
       useWhisperFallback = true;
+      sessionStorage.setItem('stt_use_whisper', 'true'); // remember for this session
       recognition = null;
       if (isListening) {
         if (onTranscriptCb) onTranscriptCb('', false);
