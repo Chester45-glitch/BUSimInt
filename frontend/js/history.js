@@ -64,6 +64,13 @@ export async function renderSidebar(onSelectSession, onNewChat) {
 
   // Render skeleton first
   sidebar.innerHTML = `
+    <!-- Collapsed: single centered chat icon -->
+    <div class="sidebar-collapsed-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+      </svg>
+    </div>
+
     <div class="sidebar-top">
       <div class="sidebar-brand">
         <div class="sidebar-brand-icon">
@@ -73,7 +80,7 @@ export async function renderSidebar(onSelectSession, onNewChat) {
       </div>
 
       <button class="sidebar-new-btn" id="sidebar-new-btn" title="New Interview">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
         <span class="sidebar-btn-label">New Interview</span>

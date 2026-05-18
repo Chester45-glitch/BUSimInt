@@ -78,7 +78,7 @@ export function getIsSpeaking() { return isSpeaking; }
 // Strategy:
 // 1. Request mic permission ONCE up front and keep the stream alive.
 // 2. Use short-session recognition (continuous: false) to avoid network timeouts.
-// 3. On network error: retry with exponential back-off.
+// 3. On persistent network errors (3+ retries): fall back to MediaRecorder → Groq Whisper STT.
 // 4. On 'aborted': silently restart (we triggered it).
 
 let recognition   = null;
@@ -90,15 +90,16 @@ let onEndCb        = null;
 let onErrorCb      = null;
 let networkRetries = 0;
 let micStream      = null; // Keep mic stream alive to prevent network errors
-const MAX_NETWORK_RETRIES = 5;
+let useWhisperFallback = false; // Switch to Whisper after repeated network failures
+const MAX_NETWORK_RETRIES = 3;
 
 export function isSpeechRecognitionSupported() {
-  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition) || !!navigator.mediaDevices;
 }
 
 // Request mic permission first to warm up the audio pipeline
 async function ensureMicPermission() {
-  if (micStream) return true;
+  if (micStream && micStream.active) return true;
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     console.log('[STT] Microphone permission granted, stream active');
@@ -113,12 +114,8 @@ export async function startListening(onTranscript, onEnd, onError) {
   if (isListening) stopListening();
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    if (onError) onError('Speech recognition is not supported. Please use Chrome or Edge.');
-    return;
-  }
 
-  // Warm up mic — this prevents the network error caused by cold-starting the audio pipeline
+  // Warm up mic
   const permitted = await ensureMicPermission();
   if (!permitted) {
     if (onError) onError('Microphone access denied. Please allow microphone in browser settings.');
@@ -132,8 +129,104 @@ export async function startListening(onTranscript, onEnd, onError) {
   networkRetries = 0;
   isListening    = true;
 
-  // Small delay to let the audio pipeline stabilize after getUserMedia
-  setTimeout(() => _startRecognition(SR), 250);
+  if (useWhisperFallback || !SR) {
+    // Use Groq Whisper via MediaRecorder
+    setTimeout(() => _startWhisperListening(), 250);
+  } else {
+    // Use Web Speech API first
+    setTimeout(() => _startRecognition(SR), 250);
+  }
+}
+
+// ── Whisper fallback via MediaRecorder ────────────────────────
+let mediaRecorder = null;
+let audioChunks   = [];
+let whisperActive = false;
+
+function _startWhisperListening() {
+  if (!isListening) return;
+  if (!micStream || !micStream.active) {
+    ensureMicPermission().then(ok => {
+      if (ok && isListening) _startWhisperListening();
+    });
+    return;
+  }
+
+  whisperActive = true;
+  audioChunks = [];
+
+  try {
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+
+    mediaRecorder = new MediaRecorder(micStream, { mimeType });
+  } catch (e) {
+    if (onErrorCb) onErrorCb('Could not start recording: ' + e.message);
+    return;
+  }
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) audioChunks.push(e.data);
+  };
+
+  mediaRecorder.onstop = async () => {
+    if (!whisperActive) return;
+    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+    audioChunks = [];
+
+    if (blob.size < 1000) {
+      // Too short — restart
+      if (isListening) setTimeout(() => _startWhisperListening(), 300);
+      return;
+    }
+
+    if (onTranscriptCb) onTranscriptCb('🔄 Processing...', false);
+
+    try {
+      const import_ = await import('./config.js');
+      const Config = import_.default;
+      const formData = new FormData();
+      formData.append('audio', blob, 'audio.webm');
+
+      const res = await fetch(`${Config.API_BASE_URL}/stt/whisper`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = (data.text || '').trim();
+        if (text) {
+          fullTranscript = text;
+          if (onTranscriptCb) onTranscriptCb(text, false);
+          // Silence timer
+          clearTimeout(silenceTimer);
+          silenceTimer = setTimeout(() => {
+            if (isListening && fullTranscript.trim()) {
+              const result = fullTranscript.trim();
+              isListening = false;
+              if (onTranscriptCb) onTranscriptCb(result, true);
+              if (onEndCb) onEndCb(result);
+            }
+          }, 1500);
+        }
+      }
+    } catch (e) {
+      console.warn('[STT Whisper] transcription failed:', e.message);
+    }
+
+    // Restart recording segment
+    if (isListening) setTimeout(() => _startWhisperListening(), 200);
+  };
+
+  // Record in 4-second segments
+  mediaRecorder.start();
+  setTimeout(() => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+    }
+  }, 4000);
 }
 
 function _startRecognition(SR) {
@@ -203,7 +296,7 @@ function _startRecognition(SR) {
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
       if (networkRetries <= MAX_NETWORK_RETRIES && isListening) {
         // Re-acquire mic stream on retry to reset audio pipeline
-        if (networkRetries > 2) {
+        if (networkRetries > 1) {
           micStream?.getTracks().forEach(t => t.stop());
           micStream = null;
           setTimeout(async () => {
@@ -220,9 +313,13 @@ function _startRecognition(SR) {
         }
         return;
       }
-      isListening = false;
-      clearTimeout(silenceTimer);
-      if (onErrorCb) onErrorCb('Microphone network error. Ensure Chrome/Edge is used on HTTPS. Try refreshing and allowing mic access again.');
+      // Switch to Whisper fallback
+      console.log('[STT] Switching to Whisper fallback after repeated network errors');
+      useWhisperFallback = true;
+      if (isListening) {
+        if (onTranscriptCb) onTranscriptCb('', false); // clear interim
+        _startWhisperListening();
+      }
       return;
     }
 
@@ -269,11 +366,17 @@ function _startRecognition(SR) {
 
 export function stopListening() {
   isListening = false;
+  whisperActive = false;
   clearTimeout(silenceTimer);
   onTranscriptCb = null;
   onEndCb        = null;
   onErrorCb      = null;
   fullTranscript = '';
+
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try { mediaRecorder.stop(); } catch (e) { /* ignore */ }
+    mediaRecorder = null;
+  }
 
   if (recognition) {
     try {
