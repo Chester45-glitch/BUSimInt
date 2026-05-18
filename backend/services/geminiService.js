@@ -1,23 +1,88 @@
-// services/geminiService.js — Gemini API for analysis + TTS
+// services/geminiService.js — Gemini API with key rotation (up to 2 keys)
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-let genAI = null;
+const COOLDOWN_MS = 60 * 1000; // 1 min cooldown before retrying exhausted key
 
-function getClient() {
-  if (!genAI) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key || key.startsWith('your_')) {
-      throw new Error('GEMINI_API_KEY is not set in environment variables.');
-    }
-    genAI = new GoogleGenerativeAI(key);
+// ── Key Pool ─────────────────────────────────────────────────
+function buildPool() {
+  const raw = [
+    process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+  ];
+
+  const pool = raw
+    .filter(k => k && k.trim() && !k.startsWith('your_'))
+    .map((apiKey, i) => ({
+      index: i + 1,
+      apiKey,
+      client: new GoogleGenerativeAI(apiKey),
+      exhaustedAt: null,
+    }));
+
+  if (pool.length === 0) {
+    throw new Error('No valid GEMINI_API_KEY_1 or GEMINI_API_KEY_2 found in environment.');
   }
-  return genAI;
+
+  console.log(`[Gemini] Key pool initialised with ${pool.length} key(s).`);
+  return pool;
 }
 
-// ─── Analysis ─────────────────────────────────────────────────────────────────
+let pool = null;
+function getPool() {
+  if (!pool) pool = buildPool();
+  return pool;
+}
 
+function getAvailableEntry() {
+  const now = Date.now();
+  for (const entry of getPool()) {
+    if (!entry.exhaustedAt || now - entry.exhaustedAt >= COOLDOWN_MS) {
+      if (entry.exhaustedAt) {
+        entry.exhaustedAt = null;
+        console.log(`[Gemini] Key #${entry.index} cooldown expired — back in rotation.`);
+      }
+      return entry;
+    }
+  }
+  const soonest = Math.min(...getPool().map(e => COOLDOWN_MS - (Date.now() - e.exhaustedAt)));
+  throw new Error(`All Gemini API keys exhausted. Retry in ${Math.ceil(soonest / 1000)}s.`);
+}
+
+function markExhausted(entry) {
+  entry.exhaustedAt = Date.now();
+  console.warn(`[Gemini] Key #${entry.index} exhausted — cooldown ${COOLDOWN_MS / 1000}s.`);
+}
+
+function isQuotaError(err) {
+  const status = err?.status ?? err?.statusCode ?? err?.errorDetails?.[0]?.reason;
+  if ([429, 402, 403].includes(status)) return true;
+  const msg = (err?.message || '').toLowerCase();
+  return msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource exhausted') || msg.includes('billing');
+}
+
+async function withRotation(fn) {
+  let lastError;
+  for (let attempt = 0; attempt < getPool().length; attempt++) {
+    let entry;
+    try { entry = getAvailableEntry(); } catch (e) { throw e; }
+    try {
+      return await fn(entry.client);
+    } catch (err) {
+      lastError = err;
+      if (isQuotaError(err)) {
+        markExhausted(entry);
+        console.log(`[Gemini] Rotating after quota error on key #${entry.index}…`);
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw lastError || new Error('All Gemini keys failed.');
+}
+
+// ── Analysis ─────────────────────────────────────────────────
 function buildAnalysisPrompt(transcript, interviewConfig) {
-  const transcriptText = transcript
+  const text = transcript
     .map(t => `${t.role === 'assistant' ? 'INTERVIEWER' : 'CANDIDATE'}: ${t.content}`)
     .join('\n\n');
 
@@ -61,34 +126,38 @@ Schema:
 }
 
 TRANSCRIPT:
-${transcriptText}`;
+${text}`;
 }
 
 async function analyzeInterview(transcript, interviewConfig) {
-  const client = getClient();
-  const model = client.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const raw = await withRotation(async (client) => {
+    const model = client.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const result = await model.generateContent(buildAnalysisPrompt(transcript, interviewConfig));
+    return result.response.text();
+  });
 
-  const result = await model.generateContent(buildAnalysisPrompt(transcript, interviewConfig));
-  const raw = result.response.text();
   const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
   try {
     return JSON.parse(cleaned);
   } catch (e) {
-    console.error('[Gemini] Failed to parse analysis JSON:', e.message, '\nRaw:', raw.slice(0, 300));
+    console.error('[Gemini] Failed to parse JSON:', e.message, '\nRaw:', raw.slice(0, 300));
     throw new Error('Failed to parse analysis response from Gemini');
   }
 }
 
-// ─── TTS via Gemini ───────────────────────────────────────────────────────────
-// Gemini doesn't have a dedicated TTS endpoint like Google Cloud TTS,
-// so we signal the frontend to use the browser's built-in speech synthesis.
-// This is reliable, free, and works in all browsers.
-// If Google ever ships a free Gemini TTS REST endpoint, swap it in here.
-
+// ── TTS (browser fallback — Gemini has no free audio endpoint) ─
 async function synthesizeSpeech(text) {
-  // Always use browser TTS — no billing required
   return { useBrowserTTS: true, text };
 }
 
-module.exports = { analyzeInterview, synthesizeSpeech };
+// ── Status (for /api/keys/status debug endpoint) ──────────────
+function getGeminiKeyPoolStatus() {
+  const now = Date.now();
+  return getPool().map(e => ({
+    key: `gemini_key_${e.index}`,
+    status: !e.exhaustedAt || now - e.exhaustedAt >= COOLDOWN_MS ? 'available' : 'exhausted',
+    cooldownRemainingMs: e.exhaustedAt ? Math.max(0, COOLDOWN_MS - (now - e.exhaustedAt)) : 0,
+  }));
+}
+
+module.exports = { analyzeInterview, synthesizeSpeech, getGeminiKeyPoolStatus };
