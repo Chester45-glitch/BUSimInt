@@ -1,16 +1,139 @@
-// services/groqService.js — Handles all Groq API interactions
+// services/groqService.js — Handles all Groq API interactions with key rotation
 const Groq = require('groq-sdk');
 
-let groqClient = null;
+// ─── Key Rotation Pool ────────────────────────────────────────────────────────
+//
+// Reads up to 3 Groq API keys from environment variables:
+//   GROQ_API_KEY_1  (primary)
+//   GROQ_API_KEY_2  (first fallback)
+//   GROQ_API_KEY_3  (second fallback)
+//
+// Also accepts the legacy GROQ_API_KEY as an alias for _1.
+// Keys are tried in order. If a key returns a rate-limit (429) or
+// quota-exhausted (402/403) error, it is marked exhausted for
+// COOLDOWN_MS and the next key is tried automatically.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 
-function getClient() {
-  if (!groqClient) {
-    if (!process.env.GROQ_API_KEY) {
-      throw new Error('GROQ_API_KEY environment variable is not set');
-    }
-    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const COOLDOWN_MS = 60 * 1000; // 1 minute cooldown before re-trying an exhausted key
+
+// Build the pool from env — filter out any that are missing / placeholder
+function buildKeyPool() {
+  const raw = [
+    process.env.GROQ_API_KEY_1 || process.env.GROQ_API_KEY,
+    process.env.GROQ_API_KEY_2,
+    process.env.GROQ_API_KEY_3,
+  ];
+
+  const pool = raw
+    .filter(k => k && k.trim() && !k.startsWith('your_'))
+    .map((apiKey, index) => ({
+      index: index + 1,
+      apiKey,
+      client: new Groq({ apiKey }),
+      exhaustedAt: null,   // timestamp when marked exhausted (null = available)
+    }));
+
+  if (pool.length === 0) {
+    throw new Error(
+      'No valid Groq API keys found. Set GROQ_API_KEY_1 (and optionally _2, _3) in your .env file.'
+    );
   }
-  return groqClient;
+
+  console.log(`[Groq] Key pool initialised with ${pool.length} key(s).`);
+  return pool;
+}
+
+let keyPool = null;
+
+function getPool() {
+  if (!keyPool) keyPool = buildKeyPool();
+  return keyPool;
+}
+
+/**
+ * Returns the next available (non-exhausted) Groq client.
+ * Throws if all keys are currently exhausted.
+ */
+function getAvailableClient() {
+  const pool = getPool();
+  const now = Date.now();
+
+  for (const entry of pool) {
+    if (entry.exhaustedAt === null) return entry;           // never exhausted
+    if (now - entry.exhaustedAt >= COOLDOWN_MS) {           // cooldown elapsed
+      entry.exhaustedAt = null;
+      console.log(`[Groq] Key #${entry.index} cooldown expired — back in rotation.`);
+      return entry;
+    }
+  }
+
+  const soonestMs = Math.min(...pool.map(e => COOLDOWN_MS - (now - e.exhaustedAt)));
+  throw new Error(
+    `All Groq API keys are currently exhausted. ` +
+    `Earliest retry in ${Math.ceil(soonestMs / 1000)}s.`
+  );
+}
+
+/**
+ * Mark a key as exhausted after a quota/rate-limit error.
+ */
+function markExhausted(entry) {
+  entry.exhaustedAt = Date.now();
+  console.warn(`[Groq] Key #${entry.index} marked exhausted — will retry after ${COOLDOWN_MS / 1000}s.`);
+}
+
+/**
+ * Returns true if the error from Groq means this key is out of quota/rate.
+ */
+function isQuotaError(err) {
+  const status = err?.status ?? err?.statusCode ?? err?.error?.status;
+  if ([402, 429].includes(status)) return true;
+
+  // Groq SDK wraps errors — also check message text
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('billing') ||
+    msg.includes('insufficient') ||
+    msg.includes('exceeded')
+  );
+}
+
+/**
+ * Core retry wrapper — tries each available key in order.
+ * @param {function} fn  async (groqClient) => result
+ */
+async function withRotation(fn) {
+  const pool = getPool();
+  let lastError;
+
+  for (let attempt = 0; attempt < pool.length; attempt++) {
+    let entry;
+    try {
+      entry = getAvailableClient();
+    } catch (allExhausted) {
+      throw allExhausted; // no keys available at all
+    }
+
+    try {
+      const result = await fn(entry.client);
+      return result; // success ✓
+    } catch (err) {
+      lastError = err;
+      if (isQuotaError(err)) {
+        markExhausted(entry);
+        console.log(`[Groq] Rotating to next key after quota error on key #${entry.index}…`);
+        // loop continues to try the next key
+      } else {
+        // Non-quota error (bad request, network, etc.) — don't rotate, just throw
+        throw err;
+      }
+    }
+  }
+
+  throw lastError || new Error('All Groq keys failed.');
 }
 
 /**
@@ -87,33 +210,30 @@ Be honest, specific, and constructive. Base everything strictly on the transcrip
  * Send a message in an ongoing interview simulation
  */
 async function sendInterviewMessage(messages, interviewConfig) {
-  const client = getClient();
-
   const systemPrompt = buildInterviewerSystemPrompt(
     interviewConfig.type,
     interviewConfig.jobTitle,
     interviewConfig.experienceLevel
   );
 
-  const completion = await client.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages
-    ],
-    temperature: 0.7,
-    max_tokens: 300,
+  return withRotation(async (client) => {
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...messages
+      ],
+      temperature: 0.7,
+      max_tokens: 300,
+    });
+    return completion.choices[0]?.message?.content || 'I apologize, could you please repeat that?';
   });
-
-  return completion.choices[0]?.message?.content || 'I apologize, could you please repeat that?';
 }
 
 /**
  * Analyze the full interview transcript
  */
 async function analyzeInterview(transcript, interviewConfig) {
-  const client = getClient();
-
   const transcriptText = transcript
     .map(t => `${t.role === 'assistant' ? 'INTERVIEWER' : 'CANDIDATE'}: ${t.content}`)
     .join('\n\n');
@@ -126,21 +246,22 @@ ${transcriptText}
 
 Provide your complete analysis as JSON only. No markdown, no explanation — pure JSON.`;
 
-  const completion = await client.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
-    messages: [
-      { role: 'system', content: buildAnalysisSystemPrompt() },
-      { role: 'user', content: userPrompt }
-    ],
-    temperature: 0.3,
-    max_tokens: 2000,
+  const raw = await withRotation(async (client) => {
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: buildAnalysisSystemPrompt() },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.3,
+      max_tokens: 2000,
+    });
+    return completion.choices[0]?.message?.content || '{}';
   });
 
-  const raw = completion.choices[0]?.message?.content || '{}';
-  
   // Strip any accidental markdown fences
   const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  
+
   try {
     return JSON.parse(cleaned);
   } catch (e) {
@@ -149,4 +270,22 @@ Provide your complete analysis as JSON only. No markdown, no explanation — pur
   }
 }
 
-module.exports = { sendInterviewMessage, analyzeInterview };
+/**
+ * Expose key pool status (useful for a health/debug endpoint)
+ */
+function getKeyPoolStatus() {
+  const pool = getPool();
+  const now = Date.now();
+  return pool.map(entry => ({
+    key: `key_${entry.index}`,
+    status: entry.exhaustedAt === null
+      ? 'available'
+      : (now - entry.exhaustedAt >= COOLDOWN_MS ? 'available (cooldown elapsed)' : 'exhausted'),
+    exhaustedAt: entry.exhaustedAt ? new Date(entry.exhaustedAt).toISOString() : null,
+    cooldownRemainingMs: entry.exhaustedAt
+      ? Math.max(0, COOLDOWN_MS - (now - entry.exhaustedAt))
+      : 0,
+  }));
+}
+
+module.exports = { sendInterviewMessage, analyzeInterview, getKeyPoolStatus };
