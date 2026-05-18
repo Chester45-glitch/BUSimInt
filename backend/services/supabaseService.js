@@ -160,9 +160,24 @@ async function getSessionAnalysis(sessionId) {
   return data || null;
 }
 
+async function deleteSession(sessionId, userId) {
+  const db = getClient();
+  // Cascading deletes on messages and analysis_results must be set in schema,
+  // or we delete them manually here for safety.
+  await db.from('analysis_results').delete().eq('session_id', sessionId);
+  await db.from('messages').delete().eq('session_id', sessionId);
+  const { error } = await db
+    .from('sessions')
+    .delete()
+    .eq('id', sessionId)
+    .eq('user_id', userId); // ensures user can only delete their own sessions
+  if (error) throw new Error(`deleteSession: ${error.message}`);
+}
+
 module.exports = {
   upsertUser, getUserById,
   createSession, getUserSessions, getSessionById, completeSession,
   saveMessage, getSessionMessages,
   saveAnalysis, getSessionAnalysis,
+  deleteSession,
 };

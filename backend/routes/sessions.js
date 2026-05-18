@@ -3,7 +3,8 @@ const express = require('express');
 const router = express.Router();
 const {
   getUserSessions, getSessionById, getSessionMessages,
-  getSessionAnalysis, completeSession, createSession, saveMessage
+  getSessionAnalysis, completeSession, createSession, saveMessage,
+  deleteSession
 } = require('../services/supabaseService');
 
 // Simple auth middleware — reads userId from header set by frontend
@@ -34,6 +35,17 @@ router.get('/:id', requireUser, async (req, res, next) => {
     res.json({ session, messages, analysis });
   } catch (err) {
     console.error('[Session get]', err.message);
+    next(err);
+  }
+});
+
+// DELETE /api/sessions/:id — delete a session and its data
+router.delete('/:id', requireUser, async (req, res, next) => {
+  try {
+    await deleteSession(req.params.id, req.userId);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Session delete]', err.message);
     next(err);
   }
 });

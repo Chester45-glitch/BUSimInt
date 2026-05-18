@@ -115,40 +115,51 @@ async function withRotation(fn) {
 // ── Analysis ─────────────────────────────────────────────────
 function buildAnalysisPrompt(transcript, interviewConfig) {
   const text = transcript
-    .map(t => `${t.role === 'assistant' ? 'INTERVIEWER' : 'CANDIDATE'}: ${t.content}`)
+    .map(t => (t.role === 'assistant' ? 'INTERVIEWER' : 'CANDIDATE') + ': ' + t.content)
     .join('\n\n');
 
-  return `You are an expert interview coach. Analyze the interview transcript and return ONLY a raw JSON object. No markdown, no code fences, no explanation — just the JSON.
+  const schema = JSON.stringify({
+    overallScore: 72,
+    summary: "2-3 sentence honest assessment of performance in this specific interview.",
+    emotionAnalysis: {
+      dominant: "confident",
+      confidence: 70, positivity: 65, clarity: 72,
+      breakdown: { confident: 70, nervous: 25, enthusiastic: 55, analytical: 60 }
+    },
+    answerStrength: { relevance: 75, structure: 68, specificity: 62, communication: 70 },
+    strengths: ["Specific strength one from transcript", "Specific strength two", "Specific strength three"],
+    improvements: [{ area: "Area name", issue: "Specific issue observed", suggestion: "Concrete actionable advice" }],
+    questionFeedback: [{ question: "Question text", answer: "Answer summary", score: 70, feedback: "Specific feedback" }],
+    readinessLevel: "Almost There",
+    topTip: "Single most important advice for this candidate."
+  }, null, 2);
 
-{
-  "overallScore": 75,
-  "summary": "2-3 sentence assessment.",
-  "emotionAnalysis": {
-    "dominant": "confident",
-    "confidence": 70,
-    "positivity": 65,
-    "clarity": 72,
-    "breakdown": { "confident": 70, "nervous": 30, "enthusiastic": 55, "analytical": 60 }
-  },
-  "answerStrength": { "relevance": 75, "structure": 68, "specificity": 62, "communication": 70 },
-  "strengths": ["Strength one", "Strength two", "Strength three"],
-  "improvements": [
-    { "area": "Area", "issue": "What went wrong", "suggestion": "How to fix it" },
-    { "area": "Area", "issue": "What went wrong", "suggestion": "How to fix it" }
-  ],
-  "questionFeedback": [
-    { "question": "Question text", "answer": "Answer summary", "score": 70, "feedback": "Feedback" }
-  ],
-  "readinessLevel": "Almost There",
-  "topTip": "Most important advice."
-}
-
-Interview type: ${interviewConfig.type}
-Position: ${interviewConfig.jobTitle || interviewConfig.type}
-Experience: ${interviewConfig.experienceLevel || 'not specified'}
-
-TRANSCRIPT:
-${text}`;
+  return [
+    'You are an expert interview coach and psycholinguistics analyst.',
+    'Analyze the CANDIDATE lines in the transcript below and return ONLY a valid JSON object — no markdown, no code fences, no extra text.',
+    '',
+    'EMOTION ANALYSIS RULES (read carefully — these are non-negotiable):',
+    '- Score emotions ONLY from CANDIDATE lines. Ignore INTERVIEWER lines entirely.',
+    '- Each transcript is INDEPENDENT. Do NOT carry over or inherit scores from previous sessions.',
+    '- confident: assertive language, specific achievements, numbers, active voice, minimal hedging.',
+    '- nervous: fillers (um, uh, I think, I guess, not sure, sorry, I don\'t know), excessive qualifiers, very short answers.',
+    '- enthusiastic: positive language, elaboration beyond the question, words like love/excited/enjoy/passionate.',
+    '- analytical: logical structure, STAR framework, data references, step-by-step reasoning.',
+    '- All emotion scores are independent 0-100 percentages (they do NOT sum to 100).',
+    '- overallScore calibration: average candidate=50-65, good=66-80, excellent=81-100. Be honest and accurate.',
+    '',
+    'Return exactly this JSON (fill in real values, do not copy the example numbers):',
+    schema,
+    '',
+    'readinessLevel options: "Not Ready Yet" | "Almost There" | "Interview Ready" | "Standout Candidate"',
+    '',
+    'Interview type: ' + interviewConfig.type,
+    'Position: ' + (interviewConfig.jobTitle || interviewConfig.type),
+    'Experience level: ' + (interviewConfig.experienceLevel || 'not specified'),
+    '',
+    'TRANSCRIPT (analyze CANDIDATE lines only for emotion):',
+    text
+  ].join('\n');
 }
 
 async function analyzeInterview(transcript, interviewConfig) {
