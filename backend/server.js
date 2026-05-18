@@ -28,6 +28,16 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Key pool status — shows which Groq keys are available/exhausted
+app.get('/api/keys/status', (req, res) => {
+  try {
+    const { getKeyPoolStatus } = require('./services/groqService');
+    res.json({ keys: getKeyPoolStatus(), timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('[Server Error]', err);
