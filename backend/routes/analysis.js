@@ -1,12 +1,19 @@
-// routes/analysis.js — Post-interview analysis via Gemini + save to Supabase
+// routes/analysis.js — Post-interview analysis via Gemini (falls back to Groq on quota errors)
 const express = require('express');
 const router = express.Router();
-const { analyzeInterview } = require('../services/geminiService');
+const { analyzeInterview: analyzeWithGemini } = require('../services/geminiService');
+const { analyzeInterview: analyzeWithGroq }   = require('../services/groqService');
 const { saveAnalysis, completeSession } = require('../services/supabaseService');
 
 function requireUser(req, res, next) {
   req.userId = req.headers['x-user-id'] || null;
   next();
+}
+
+function isQuotaError(err) {
+  const msg = (err?.message || '').toLowerCase();
+  return msg.includes('quota') || msg.includes('429') || msg.includes('rate limit') ||
+    msg.includes('too many requests') || msg.includes('exhausted') || msg.includes('billing');
 }
 
 router.post('/analyze', requireUser, async (req, res, next) => {
@@ -25,7 +32,22 @@ router.post('/analyze', requireUser, async (req, res, next) => {
       return res.status(400).json({ error: 'No candidate responses found in transcript' });
     }
 
-    const analysis = await analyzeInterview(transcript, config);
+    // Try Gemini first, fall back to Groq on quota/rate-limit errors
+    let analysis;
+    let provider = 'gemini';
+    try {
+      analysis = await analyzeWithGemini(transcript, config);
+    } catch (geminiErr) {
+      if (isQuotaError(geminiErr)) {
+        console.warn('[Analysis] Gemini quota exceeded — falling back to Groq:', geminiErr.message);
+        provider = 'groq';
+        analysis = await analyzeWithGroq(transcript, config);
+      } else {
+        throw geminiErr;
+      }
+    }
+
+    console.log(`[Analysis] Completed via ${provider}`);
 
     // Persist to Supabase
     if (req.userId && sessionId) {
@@ -43,7 +65,8 @@ router.post('/analyze', requireUser, async (req, res, next) => {
         totalExchanges: userMessages.length,
         interviewType:  config.type,
         jobTitle:       config.jobTitle,
-        analyzedAt:     new Date().toISOString()
+        analyzedAt:     new Date().toISOString(),
+        provider,
       }
     });
   } catch (err) {
