@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: interview-simulator-api
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: GROQ_API_KEY
+        sync: false  # Set this in Render dashboard
+      - key: GOOGLE_TTS_API_KEY
+        sync: false  # Optional — set in Render dashboard
+      - key: FRONTEND_URL
+        sync: false  # Your Vercel URL
+    healthCheckPath: /api/health
