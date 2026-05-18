@@ -147,11 +147,14 @@ let whisperActive  = false;
 let vadAudioCtx    = null; // Web Audio context for voice activity detection
 
 // VAD tuning constants
-const VAD_SILENCE_THRESHOLD = 8;    // RMS below this = silence (0-100 scale)
-const VAD_SPEECH_THRESHOLD  = 12;   // RMS above this = speech confirmed
-const VAD_SILENCE_MS        = 1800; // ms of silence after speech before we stop
-const VAD_MAX_MS            = 45000; // safety cap: stop after 45 s regardless
-const VAD_MIN_MS            = 400;   // don't stop before 400 ms (avoid clipping first word)
+// VAD_SPEECH_THRESHOLD must be well above ambient mic hiss (~5-8 RMS).
+// 12 was too low — room noise alone set hasSpeech=true before any speech.
+const VAD_SILENCE_THRESHOLD  = 10;   // RMS below this = silence
+const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = real speech (raised from 12)
+const VAD_SPEECH_SUSTAIN_MS  = 250;  // speech must sustain this long before hasSpeech=true
+const VAD_SILENCE_MS         = 1800; // ms of silence after speech before we stop
+const VAD_MAX_MS             = 45000; // safety cap: stop after 45 s regardless
+const VAD_MIN_MS             = 600;   // don't stop before 600 ms (avoid clipping first word)
 
 function _startWhisperListening() {
   if (!isListening) return;
@@ -247,11 +250,12 @@ function _startWhisperListening() {
     analyser.fftSize   = 512;
     source.connect(analyser);
 
-    const buf         = new Uint8Array(analyser.frequencyBinCount);
-    const startTime   = Date.now();
-    let hasSpeech     = false;
-    let silenceStart  = null;
-    let vadRunning    = true;
+    const buf          = new Uint8Array(analyser.frequencyBinCount);
+    const startTime    = Date.now();
+    let hasSpeech      = false;
+    let speechOnSince  = null; // when loud audio first appeared (sustain check)
+    let silenceStart   = null;
+    let vadRunning     = true;
 
     const tick = () => {
       if (!vadRunning || !whisperActive || !isListening) return;
@@ -269,9 +273,19 @@ function _startWhisperListening() {
       const elapsed = Date.now() - startTime;
 
       if (rms >= VAD_SPEECH_THRESHOLD) {
-        hasSpeech    = true;
+        // Track how long the loud audio has been sustained
+        if (!speechOnSince) speechOnSince = Date.now();
+        // Only mark hasSpeech after sustained loud audio — prevents a single
+        // breath/click/noise-spike from prematurely starting the silence timer
+        if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
+          hasSpeech = true;
+        }
         silenceStart = null;
-      } else if (rms < VAD_SILENCE_THRESHOLD && hasSpeech) {
+      } else {
+        speechOnSince = null; // reset sustain on any quiet frame
+      }
+
+      if (rms < VAD_SILENCE_THRESHOLD && hasSpeech) {
         if (!silenceStart) silenceStart = Date.now();
         const silenceDuration = Date.now() - silenceStart;
 
@@ -396,21 +410,32 @@ function _startRecognition(SR) {
     if (err === 'network') {
       networkRetries++;
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
+
+      // Null ALL handlers and abort this rec immediately.
+      // Two races this prevents:
+      //   1. rec.onend fires ~300ms after onerror; without nulling it sees
+      //      recognition===rec and schedules another _startRecognition, which
+      //      races the 900ms retry and creates a ghost "retry 3/2" session.
+      //   2. A stale 900ms setTimeout from an earlier retry fires after we've
+      //      switched to Whisper — guard below catches any survivors.
+      rec.onstart  = null;
+      rec.onresult = null;
+      rec.onerror  = null;
+      rec.onend    = null;
+      recognition  = null;
+      try { rec.abort(); } catch (_) {}
+
       if (networkRetries < MAX_NETWORK_RETRIES && isListening) {
-        // Do NOT stop micStream here — tearing it down and requesting it again
-        // was causing repeated "permission granted" logs and an audio pipeline
-        // reset that triggered another network error immediately after.
         setTimeout(() => {
-          if (!isListening) return;
+          if (!isListening || useWhisperFallback) return; // guard stale timers
           _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
         }, 900 * networkRetries);
         return;
       }
-      // Persistent network failures → switch to Whisper
+      // Persistent network failures → switch to Whisper for this whole session
       console.log('[STT] Switching to Whisper fallback after persistent network errors');
       useWhisperFallback = true;
-      sessionStorage.setItem('stt_use_whisper', 'true'); // remember for this session
-      recognition = null;
+      sessionStorage.setItem('stt_use_whisper', 'true');
       if (isListening) {
         if (onTranscriptCb) onTranscriptCb('', false);
         _startWhisperListening();
