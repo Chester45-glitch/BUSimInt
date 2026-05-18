@@ -17,7 +17,7 @@ export function renderSetupScreen() {
   if (typeGrid) {
     typeGrid.innerHTML = Config.INTERVIEW_TYPES.map(t => `
       <button class="type-card" data-value="${t.value}" aria-label="${t.label}">
-        <span class="type-icon">${t.icon}</span>
+        <span class="type-icon type-icon--svg">${t.icon}</span>
         <span class="type-label">${t.label}</span>
       </button>`).join('');
   }

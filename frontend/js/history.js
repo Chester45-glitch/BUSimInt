@@ -43,23 +43,44 @@ export async function renderSidebar(onSelectSession, onNewChat) {
   const user = getUser();
   if (!user) return;
 
+  // ── Sidebar click-to-open (not hover) ──────────────────────
+  // Remove hover; open on click of collapsed sliver, close on outside click
+  if (!sidebar._clickBound) {
+    sidebar._clickBound = true;
+
+    sidebar.addEventListener('click', (e) => {
+      if (!sidebar.classList.contains('sidebar--open')) {
+        sidebar.classList.add('sidebar--open');
+        e.stopPropagation();
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (sidebar.classList.contains('sidebar--open') && !sidebar.contains(e.target)) {
+        sidebar.classList.remove('sidebar--open');
+      }
+    });
+  }
+
   // Render skeleton first
   sidebar.innerHTML = `
-    <div class="sidebar-header">
+    <div class="sidebar-top">
       <div class="sidebar-brand">
         <div class="sidebar-brand-icon">
           <img src="./BUSimInt_Logo.png" alt="BUSimInt">
         </div>
         <span class="sidebar-brand-name">BUSimInt</span>
       </div>
+
       <button class="sidebar-new-btn" id="sidebar-new-btn" title="New Interview">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
+        <span>New Interview</span>
       </button>
     </div>
 
-    <div class="sidebar-section-label">Interviews</div>
+    <div class="sidebar-section-label">History</div>
 
     <div class="sidebar-sessions" id="sidebar-sessions">
       <div class="sidebar-loading">
@@ -71,7 +92,7 @@ export async function renderSidebar(onSelectSession, onNewChat) {
 
     <div class="sidebar-footer">
       <div class="sidebar-user">
-        <img class="sidebar-avatar" src="${user.avatarUrl || ''}" alt="${user.name}" onerror="this.src=''">
+        <img class="sidebar-avatar" src="${user.avatarUrl || ''}" alt="${user.name}" onerror="this.style.display='none'">
         <div class="sidebar-user-info">
           <span class="sidebar-user-name">${user.name || user.email}</span>
           <span class="sidebar-user-email">${user.email}</span>
@@ -87,8 +108,14 @@ export async function renderSidebar(onSelectSession, onNewChat) {
     </div>
   `;
 
-  document.getElementById('sidebar-new-btn').addEventListener('click', onNewChat);
-  document.getElementById('sidebar-logout-btn').addEventListener('click', () => {
+  document.getElementById('sidebar-new-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    sidebar.classList.remove('sidebar--open');
+    onNewChat();
+  });
+
+  document.getElementById('sidebar-logout-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
     import('./auth.js').then(({ logout }) => {
       logout();
       window.location.reload();
@@ -148,14 +175,12 @@ function renderSessionList(sessions, onSelect) {
         e.stopPropagation();
         dropdown?.classList.remove('open');
         if (!confirm('Delete this interview session?')) return;
+        const group = el.closest('.sidebar-group'); // capture BEFORE remove
         await deleteSession(el.dataset.id);
-        el.closest('.sidebar-group')?.querySelector('.sidebar-session-item') === el
-          ? el.closest('.sidebar-group').style.display = 'none'
-          : null;
         el.remove();
-        // If group is now empty, remove it
-        const group = el.closest?.('.sidebar-group');
-        if (group && group.querySelectorAll('.sidebar-session-item').length === 0) group.remove();
+        if (group && group.querySelectorAll('.sidebar-session-item').length === 0) {
+          group.remove();
+        }
       });
     }
   });
