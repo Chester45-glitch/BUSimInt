@@ -288,8 +288,6 @@ export function stopListening() {
 export function getIsListening() { return isListening; }
 
 // ── Text to Speech ────────────────────────────────────────────
-let currentAudio = null;
-let isSpeaking = false;
 
 export async function speakText(text, onStart, onEnd) {
   stopSpeaking();
