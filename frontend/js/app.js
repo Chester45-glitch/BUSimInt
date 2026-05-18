@@ -245,7 +245,9 @@ async function handleStartInterview() {
       setVoiceState('speaking');
       InterviewState.setSpeaking(true);
       await speakText(data.message, () => setVoiceState('speaking'), () => {
-        setVoiceState('idle'); InterviewState.setSpeaking(false);
+        InterviewState.setSpeaking(false);
+        setVoiceState('idle');
+        setInputEnabled(true); // re-enable voice button after opening question
       });
     } else {
       showChatUI();
@@ -372,7 +374,9 @@ async function submitUserMessage(text) {
       setVoiceState('speaking');
       InterviewState.setSpeaking(true);
       await speakText(response.message, () => {}, () => {
-        InterviewState.setSpeaking(false); setVoiceState('idle');
+        InterviewState.setSpeaking(false);
+        setVoiceState('idle');
+        setInputEnabled(true); // safety net: re-enable after TTS finishes
       });
     }
   } catch (err) {
@@ -392,7 +396,18 @@ function setInputEnabled(enabled) {
     if (el) el.disabled = !enabled;
   });
   const vb = document.getElementById('voice-btn');
-  if (vb && !InterviewState.isListening && !InterviewState.isSpeaking) vb.disabled = !enabled;
+  if (!vb) return;
+  if (enabled) {
+    // Always re-enable the voice button. The old code kept vb.disabled=true
+    // whenever isSpeaking was true at the time finally{} ran — but speakText()
+    // is fire-and-forget, so await resolves immediately while TTS still plays.
+    // Result: button stayed permanently disabled after the first answer.
+    vb.disabled = false;
+  } else if (!InterviewState.isListening && !InterviewState.isSpeaking) {
+    // Only disable during loading; never while actively listening/speaking
+    // (tapping then should stop the active state, not be silently ignored).
+    vb.disabled = true;
+  }
 }
 
 function handleEndRequest() {
