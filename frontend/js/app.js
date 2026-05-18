@@ -5,7 +5,7 @@ import { getUser, isLoggedIn } from './auth.js';
 import { startInterview, sendMessage, analyzeInterview } from './api.js';
 import { renderSidebar, highlightActiveSession } from './history.js';
 import {
-  speakText, stopSpeaking, startListening, stopListening, isSpeechRecognitionSupported
+  speakText, stopSpeaking, startListening, stopListening, isSpeechRecognitionSupported, submitNow
 } from './speech.js';
 import {
   showScreen, renderSetupScreen, selectCard, validateSetupAndGetErrors,
@@ -289,6 +289,7 @@ function bindInterviewEvents() {
   });
 
   document.getElementById('voice-btn')?.addEventListener('click', handleVoiceBtnClick);
+  document.getElementById('voice-submit-btn')?.addEventListener('click', handleVoiceSubmit);
   document.getElementById('end-interview-btn').addEventListener('click', handleEndRequest);
   document.getElementById('restart-btn')?.addEventListener('click', handleNewChat);
   document.getElementById('download-btn')?.addEventListener('click', handleDownload);
@@ -311,23 +312,36 @@ async function handleChatSend() {
   await submitUserMessage(text);
 }
 
+function setSubmitBtnVisible(visible) {
+  const btn = document.getElementById('voice-submit-btn');
+  if (btn) btn.style.display = visible ? 'inline-flex' : 'none';
+}
+
 function handleVoiceBtnClick() {
   if (InterviewState.isSpeaking) {
     stopSpeaking(); InterviewState.setSpeaking(false); setVoiceState('idle'); return;
   }
   if (InterviewState.isListening) {
-    stopListening(); InterviewState.setListening(false); setVoiceState('idle'); return;
+    stopListening(); InterviewState.setListening(false); setVoiceState('idle');
+    setSubmitBtnVisible(false); updateVoiceTranscript(''); return;
   }
   if (InterviewState.isLoading) return;
 
   setVoiceState('listening');
   InterviewState.setListening(true);
   updateVoiceTranscript('');
+  setSubmitBtnVisible(false);
 
   startListening(
-    (text) => updateVoiceTranscript(text),
+    (text) => {
+      updateVoiceTranscript(text);
+      // Show submit button as soon as there's real text (not just the placeholder)
+      const hasText = text && !text.startsWith('🎙️');
+      setSubmitBtnVisible(hasText);
+    },
     async (finalText) => {
       InterviewState.setListening(false);
+      setSubmitBtnVisible(false);
       updateVoiceTranscript('');
       if (finalText?.trim()) {
         setVoiceState('processing');
@@ -340,9 +354,16 @@ function handleVoiceBtnClick() {
     (errMsg) => {
       InterviewState.setListening(false);
       setVoiceState('idle');
+      setSubmitBtnVisible(false);
       showToast(errMsg, 'error');
     }
   );
+}
+
+function handleVoiceSubmit() {
+  if (!InterviewState.isListening) return;
+  setSubmitBtnVisible(false);
+  submitNow(); // triggers the onEnd callback with whatever was captured
 }
 
 async function submitUserMessage(text) {

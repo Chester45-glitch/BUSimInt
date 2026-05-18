@@ -164,9 +164,9 @@ let vadAudioCtx    = null; // Web Audio context for voice activity detection
 const VAD_SILENCE_THRESHOLD  = 10;   // RMS below this = silence
 const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = real speech (raised from 12)
 const VAD_SPEECH_SUSTAIN_MS  = 120;  // speech must sustain this long before hasSpeech=true
-const VAD_SILENCE_MS         = 1800; // ms of silence after speech before we stop
+const VAD_SILENCE_MS         = 900;  // ms of silence after speech before we stop
 const VAD_MAX_MS             = 45000; // safety cap: stop after 45 s regardless
-const VAD_MIN_MS             = 600;   // don't stop before 600 ms (avoid clipping first word)
+const VAD_MIN_MS             = 300;  // don't stop before 300 ms (avoid clipping first word)
 
 function _startWhisperListening() {
   if (!isListening) return;
@@ -559,4 +559,36 @@ export function stopListening() {
 }
 
 export function getIsListening() { return isListening; }
+
+// Returns whatever has been captured so far (for the Submit button)
+export function getPartialTranscript() { return fullTranscript.trim(); }
+
+// Immediately finalise the current recording and fire onEnd with what we have.
+// Called by the Submit Answer button.
+export function submitNow() {
+  if (!isListening) return;
+
+  // Web Speech API path — we have fullTranscript already
+  if (recognition) {
+    const text = fullTranscript.trim();
+    _stopRecognitionClean();
+    const _onTranscript = onTranscriptCb;
+    const _onEnd        = onEndCb;
+    onTranscriptCb = null;
+    onEndCb        = null;
+    onErrorCb      = null;
+    if (text) {
+      if (_onTranscript) _onTranscript(text, true);
+      if (_onEnd)        _onEnd(text);
+    }
+    return;
+  }
+
+  // Whisper path — stop the recorder; onstop will handle transcription
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    whisperActive = true; // keep onstop handler alive
+    mediaRecorder.stop();
+    // onstop will call onTranscriptCb / onEndCb as usual
+  }
+}
 
