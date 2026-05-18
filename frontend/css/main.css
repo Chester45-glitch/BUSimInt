@@ -131,7 +131,11 @@ body {
   background: var(--accent-light);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
-.type-icon { font-size: 1.5rem; }
+.type-icon { font-size: 1.5rem; display: flex; align-items: center; justify-content: center; }
+.type-icon--svg { width: 32px; height: 32px; font-size: 0; }
+.type-icon--svg svg { width: 28px; height: 28px; stroke: var(--text2); transition: stroke var(--t); }
+.type-card.selected .type-icon--svg svg,
+.type-card:hover .type-icon--svg svg { stroke: var(--accent); }
 .type-label { font-size: .72rem; font-weight: 500; color: var(--text2); text-align: center; }
 .type-card.selected .type-label { color: var(--accent); }
 
@@ -1004,7 +1008,7 @@ body {
 /* All screens inside app shell */
 #app-shell .screen         { display: none; flex: 1; }
 #app-shell .screen.active  { display: flex; flex-direction: column; }
-/* Hover-reveal slide-open sidebar — collapsed by default, expands on hover */
+/* Click-to-open sidebar — collapsed by default, expands on click */
 .sidebar {
   width: 260px;
   flex-shrink: 0;
@@ -1022,7 +1026,6 @@ body {
   transition: transform .28s cubic-bezier(.4,0,.2,1), box-shadow .28s;
   box-shadow: none;
 }
-.sidebar:hover,
 .sidebar.sidebar--open {
   transform: translateX(0);
   box-shadow: 4px 0 32px rgba(0,0,0,.18);
@@ -1041,18 +1044,21 @@ body {
   padding-left: 40px; /* sliver width */
 }
 
-.sidebar-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 14px 12px;
+.sidebar-top {
+  padding: 16px 12px 10px;
   border-bottom: 1px solid rgba(255,255,255,.08);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .sidebar-brand {
   display: flex; align-items: center; gap: 8px;
+  padding: 0 2px;
 }
 .sidebar-brand-icon {
-  width: 28px; height: 28px;
+  width: 30px; height: 30px;
   border-radius: 6px;
   overflow: hidden;
   display: flex; align-items: center; justify-content: center;
@@ -1065,19 +1071,24 @@ body {
   font-family: var(--font-serif);
   font-size: .95rem;
   color: #fff;
+  white-space: nowrap;
 }
 
 .sidebar-new-btn {
-  width: 30px; height: 30px;
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
   background: rgba(255,255,255,.08);
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 8px;
   cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  color: rgba(255,255,255,.7);
+  color: rgba(255,255,255,.75);
+  font-size: .8rem;
+  font-weight: 500;
   transition: all var(--t);
+  white-space: nowrap;
 }
-.sidebar-new-btn:hover { background: rgba(255,255,255,.16); color: #fff; border-color: rgba(255,255,255,.2); }
+.sidebar-new-btn:hover { background: rgba(255,255,255,.14); color: #fff; border-color: rgba(255,255,255,.2); }
 
 .sidebar-section-label {
   font-size: .62rem;
