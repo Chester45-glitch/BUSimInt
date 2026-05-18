@@ -73,10 +73,10 @@ export async function renderSidebar(onSelectSession, onNewChat) {
       </div>
 
       <button class="sidebar-new-btn" id="sidebar-new-btn" title="New Interview">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
-        <span>New Interview</span>
+        <span class="sidebar-btn-label">New Interview</span>
       </button>
     </div>
 
@@ -201,6 +201,11 @@ function renderSessionItem(session) {
 
   return `
     <div class="sidebar-session-item" data-id="${session.id}">
+      <span class="session-icon-collapsed">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+        </svg>
+      </span>
       <div class="session-info">
         <span class="session-title">${escHTML(session.title || session.interview_type)}</span>
       </div>
