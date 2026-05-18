@@ -1,68 +1,67 @@
-// routes/interview.js — Interview simulation endpoints
+// routes/interview.js — Interview simulation + Supabase persistence
 const express = require('express');
 const router = express.Router();
 const { sendInterviewMessage } = require('../services/groqService');
+const { createSession, saveMessage } = require('../services/supabaseService');
 
-/**
- * POST /api/interview/message
- * Send a message and get the interviewer's next response
- * 
- * Body:
- *   messages: Array<{role: 'user'|'assistant', content: string}>
- *   config: { type, jobTitle, experienceLevel, mode }
- */
-router.post('/message', async (req, res, next) => {
+function requireUser(req, res, next) {
+  req.userId = req.headers['x-user-id'] || null; // null = guest (no history saved)
+  next();
+}
+
+// POST /api/interview/start
+router.post('/start', requireUser, async (req, res, next) => {
   try {
-    const { messages, config } = req.body;
+    const { config } = req.body;
+    if (!config || !config.type) return res.status(400).json({ error: 'config.type is required' });
 
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ error: 'messages array is required' });
+    const openingMessage = await sendInterviewMessage([], config);
+
+    // Save session + opening message to Supabase if user is logged in
+    let sessionId = null;
+    if (req.userId) {
+      try {
+        const session = await createSession(req.userId, config);
+        sessionId = session.id;
+        await saveMessage(sessionId, 'assistant', openingMessage);
+      } catch (dbErr) {
+        console.warn('[Interview] DB save failed (non-fatal):', dbErr.message);
+      }
     }
 
-    if (!config || !config.type) {
-      return res.status(400).json({ error: 'config.type is required' });
-    }
-
-    const response = await sendInterviewMessage(messages, config);
-
-    res.json({
-      message: response,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('[Interview Route]', error);
-    next(error);
+    res.json({ message: openingMessage, sessionId, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Interview Start]', err);
+    next(err);
   }
 });
 
-/**
- * POST /api/interview/start
- * Initialize a new interview session (get opening message)
- * 
- * Body:
- *   config: { type, jobTitle, experienceLevel, mode }
- */
-router.post('/start', async (req, res, next) => {
+// POST /api/interview/message
+router.post('/message', requireUser, async (req, res, next) => {
   try {
-    const { config } = req.body;
+    const { messages, config, sessionId } = req.body;
+    if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages array required' });
+    if (!config || !config.type) return res.status(400).json({ error: 'config.type required' });
 
-    if (!config || !config.type) {
-      return res.status(400).json({ error: 'Interview config with type is required' });
+    const response = await sendInterviewMessage(messages, config);
+
+    // Save user message + AI response to Supabase
+    if (req.userId && sessionId) {
+      try {
+        const lastUserMsg = messages[messages.length - 1];
+        if (lastUserMsg?.role === 'user') {
+          await saveMessage(sessionId, 'user', lastUserMsg.content);
+        }
+        await saveMessage(sessionId, 'assistant', response);
+      } catch (dbErr) {
+        console.warn('[Interview] DB save failed (non-fatal):', dbErr.message);
+      }
     }
 
-    // Empty messages array — system prompt handles the opening
-    const openingMessage = await sendInterviewMessage([], config);
-
-    res.json({
-      message: openingMessage,
-      sessionId: `session_${Date.now()}`,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('[Interview Start Route]', error);
-    next(error);
+    res.json({ message: response, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Interview Message]', err);
+    next(err);
   }
 });
 

@@ -1,7 +1,7 @@
 {
-  "name": "interview-simulator-backend",
+  "name": "busimint-backend",
   "version": "1.0.0",
-  "description": "Interview Simulator API Backend",
+  "description": "BUSimInt — AI Interview Simulator Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,6 +13,8 @@
     "express": "^4.19.2",
     "groq-sdk": "^0.3.3",
     "@google/generative-ai": "^0.21.0",
+    "@supabase/supabase-js": "^2.43.4",
+    "google-auth-library": "^9.11.0",
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
