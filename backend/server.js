@@ -8,6 +8,7 @@ const interviewRoutes = require('./routes/interview');
 const analysisRoutes  = require('./routes/analysis');
 const ttsRoutes       = require('./routes/tts');
 const sessionsRoutes  = require('./routes/sessions');
+const sttRoutes       = require('./routes/stt');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -25,11 +26,21 @@ app.use(cors({
     const ok = allowedOrigins.some(o => typeof o === 'string' ? o === origin : o.test(origin));
     ok ? cb(null, true) : cb(new Error(`CORS: ${origin} not allowed`));
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id'],
   credentials: true,
 }));
-app.options('*', cors());
+// Explicit preflight handler — must come before routes
+app.options('*', cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    const ok = allowedOrigins.some(o => typeof o === 'string' ? o === origin : o.test(origin));
+    ok ? cb(null, true) : cb(new Error(`CORS: ${origin} not allowed`));
+  },
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id'],
+  credentials: true,
+}));
 app.use(express.json({ limit: '10mb' }));
 
 // ── Routes ────────────────────────────────────────────────────
@@ -38,6 +49,7 @@ app.use('/api/interview', interviewRoutes);
 app.use('/api/analysis',  analysisRoutes);
 app.use('/api/tts',       ttsRoutes);
 app.use('/api/sessions',  sessionsRoutes);
+app.use('/api/stt',       sttRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 

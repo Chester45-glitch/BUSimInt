@@ -50,4 +50,15 @@ router.delete('/:id', requireUser, async (req, res, next) => {
   }
 });
 
+// POST /api/sessions/:id/delete — CORS-safe fallback for environments that block DELETE
+router.post('/:id/delete', requireUser, async (req, res, next) => {
+  try {
+    await deleteSession(req.params.id, req.userId);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Session delete-post]', err.message);
+    next(err);
+  }
+});
+
 module.exports = router;
