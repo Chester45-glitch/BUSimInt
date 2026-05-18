@@ -1,7 +1,9 @@
 // services/geminiService.js — Gemini API with key rotation (up to 2 keys)
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const COOLDOWN_MS = 60 * 1000; // 1 min cooldown before retrying exhausted key
+const COOLDOWN_MS = 60 * 1000;
+// Use gemini-1.5-flash — stable, free-tier, widely available
+const GEMINI_MODEL = 'gemini-1.5-flash';
 
 // ── Key Pool ─────────────────────────────────────────────────
 function buildPool() {
@@ -11,7 +13,7 @@ function buildPool() {
   ];
 
   const pool = raw
-    .filter(k => k && k.trim() && !k.startsWith('your_'))
+    .filter(k => k && k.trim() && !k.startsWith('your_') && !k.startsWith('AIza...'))
     .map((apiKey, i) => ({
       index: i + 1,
       apiKey,
@@ -23,7 +25,7 @@ function buildPool() {
     throw new Error('No valid GEMINI_API_KEY_1 or GEMINI_API_KEY_2 found in environment.');
   }
 
-  console.log(`[Gemini] Key pool initialised with ${pool.length} key(s).`);
+  console.log(`[Gemini] Key pool ready with ${pool.length} key(s). Model: ${GEMINI_MODEL}`);
   return pool;
 }
 
@@ -54,26 +56,34 @@ function markExhausted(entry) {
 }
 
 function isQuotaError(err) {
-  const status = err?.status ?? err?.statusCode ?? err?.errorDetails?.[0]?.reason;
-  if ([429, 402, 403].includes(status)) return true;
+  const status = err?.status ?? err?.statusCode;
+  if ([429, 402, 403].includes(Number(status))) return true;
   const msg = (err?.message || '').toLowerCase();
-  return msg.includes('quota') || msg.includes('rate limit') || msg.includes('resource exhausted') || msg.includes('billing');
+  return (
+    msg.includes('quota') ||
+    msg.includes('rate limit') ||
+    msg.includes('resource exhausted') ||
+    msg.includes('billing') ||
+    msg.includes('too many requests')
+  );
 }
 
 async function withRotation(fn) {
   let lastError;
-  for (let attempt = 0; attempt < getPool().length; attempt++) {
+  const p = getPool();
+  for (let attempt = 0; attempt < p.length; attempt++) {
     let entry;
     try { entry = getAvailableEntry(); } catch (e) { throw e; }
     try {
       return await fn(entry.client);
     } catch (err) {
       lastError = err;
+      console.error(`[Gemini] Key #${entry.index} error:`, err.message);
       if (isQuotaError(err)) {
         markExhausted(entry);
-        console.log(`[Gemini] Rotating after quota error on key #${entry.index}…`);
+        console.log(`[Gemini] Rotating to next key…`);
       } else {
-        throw err;
+        throw err; // Non-quota error — don't rotate
       }
     }
   }
@@ -86,71 +96,91 @@ function buildAnalysisPrompt(transcript, interviewConfig) {
     .map(t => `${t.role === 'assistant' ? 'INTERVIEWER' : 'CANDIDATE'}: ${t.content}`)
     .join('\n\n');
 
-  return `You are an expert interview coach and HR specialist.
+  return `You are an expert interview coach and HR specialist. Analyze the interview transcript below and return ONLY a valid JSON object. No markdown code fences, no explanation, no preamble — just the raw JSON.
 
-Analyze this ${interviewConfig.type} interview transcript for the "${interviewConfig.jobTitle || interviewConfig.type}" position and return ONLY valid JSON — no markdown, no explanation.
-
-Schema:
+Return this exact structure:
 {
-  "overallScore": <0-100>,
-  "summary": "<2-3 sentence overall assessment>",
+  "overallScore": 75,
+  "summary": "2-3 sentence assessment here.",
   "emotionAnalysis": {
-    "dominant": "<confident|nervous|enthusiastic|uncertain|calm|defensive>",
-    "confidence": <0-100>,
-    "positivity": <0-100>,
-    "clarity": <0-100>,
+    "dominant": "confident",
+    "confidence": 70,
+    "positivity": 65,
+    "clarity": 72,
     "breakdown": {
-      "confident": <0-100>,
-      "nervous": <0-100>,
-      "enthusiastic": <0-100>,
-      "analytical": <0-100>
+      "confident": 70,
+      "nervous": 30,
+      "enthusiastic": 55,
+      "analytical": 60
     }
   },
   "answerStrength": {
-    "relevance": <0-100>,
-    "structure": <0-100>,
-    "specificity": <0-100>,
-    "communication": <0-100>
+    "relevance": 75,
+    "structure": 68,
+    "specificity": 62,
+    "communication": 70
   },
-  "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
+  "strengths": ["Strength one", "Strength two", "Strength three"],
   "improvements": [
-    { "area": "<area>", "issue": "<issue>", "suggestion": "<actionable fix>" },
-    { "area": "<area>", "issue": "<issue>", "suggestion": "<actionable fix>" },
-    { "area": "<area>", "issue": "<issue>", "suggestion": "<actionable fix>" }
+    { "area": "Area name", "issue": "What went wrong", "suggestion": "How to fix it" },
+    { "area": "Area name", "issue": "What went wrong", "suggestion": "How to fix it" },
+    { "area": "Area name", "issue": "What went wrong", "suggestion": "How to fix it" }
   ],
   "questionFeedback": [
-    { "question": "<q>", "answer": "<summary>", "score": <0-100>, "feedback": "<feedback>" }
+    { "question": "The interviewer's question", "answer": "Summary of candidate answer", "score": 70, "feedback": "Specific feedback" }
   ],
-  "readinessLevel": "<Not Ready|Needs Work|Almost There|Interview Ready|Exceptional>",
-  "topTip": "<single most important advice>"
+  "readinessLevel": "Almost There",
+  "topTip": "Your single most important piece of advice."
 }
+
+Interview type: ${interviewConfig.type}
+Position: ${interviewConfig.jobTitle || interviewConfig.type}
+Experience level: ${interviewConfig.experienceLevel || 'not specified'}
 
 TRANSCRIPT:
 ${text}`;
 }
 
 async function analyzeInterview(transcript, interviewConfig) {
+  console.log(`[Gemini] Starting analysis of ${transcript.length} messages…`);
+
   const raw = await withRotation(async (client) => {
-    const model = client.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = client.getGenerativeModel({
+      model: GEMINI_MODEL,
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json', // Ask Gemini to return JSON directly
+      },
+    });
     const result = await model.generateContent(buildAnalysisPrompt(transcript, interviewConfig));
-    return result.response.text();
+    const text = result.response.text();
+    console.log(`[Gemini] Raw response (first 200 chars): ${text.slice(0, 200)}`);
+    return text;
   });
 
-  const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  // Strip any accidental markdown fences just in case
+  const cleaned = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
   try {
     return JSON.parse(cleaned);
   } catch (e) {
-    console.error('[Gemini] Failed to parse JSON:', e.message, '\nRaw:', raw.slice(0, 300));
-    throw new Error('Failed to parse analysis response from Gemini');
+    console.error('[Gemini] JSON parse failed:', e.message);
+    console.error('[Gemini] Full raw response:', raw);
+    throw new Error(`Failed to parse Gemini analysis response: ${e.message}`);
   }
 }
 
-// ── TTS (browser fallback — Gemini has no free audio endpoint) ─
+// ── TTS (browser fallback) ────────────────────────────────────
 async function synthesizeSpeech(text) {
   return { useBrowserTTS: true, text };
 }
 
-// ── Status (for /api/keys/status debug endpoint) ──────────────
+// ── Status ────────────────────────────────────────────────────
 function getGeminiKeyPoolStatus() {
   const now = Date.now();
   return getPool().map(e => ({
