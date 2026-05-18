@@ -90,7 +90,7 @@ let onEndCb        = null;
 let onErrorCb      = null;
 let networkRetries = 0;
 let micStream      = null; // Keep mic stream alive to prevent network errors
-let useWhisperFallback = false; // Reset each mic press — network errors are often transient
+let useWhisperFallback = false; // Once set true after persistent network errors, stays true for the session
 const MAX_NETWORK_RETRIES = 2; // Switch to Whisper after 2 failures, not 3
 
 export function isSpeechRecognitionSupported() {
@@ -113,6 +113,15 @@ async function ensureMicPermission() {
 export async function startListening(onTranscript, onEnd, onError) {
   if (isListening) stopListening();
 
+  // Always reset stale state from a previous completed session,
+  // even when isListening was already false (e.g. after Whisper finished).
+  whisperActive = false;
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try { mediaRecorder.stop(); } catch (_) {}
+  }
+  mediaRecorder = null;
+  if (vadAudioCtx) { try { vadAudioCtx.close(); } catch (_) {} vadAudioCtx = null; }
+
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   // Warm up mic
@@ -127,7 +136,6 @@ export async function startListening(onTranscript, onEnd, onError) {
   onErrorCb      = onError;
   fullTranscript = '';
   networkRetries = 0;
-  useWhisperFallback = false; // Give Web Speech API a fresh chance every mic press
   isListening    = true;
 
   if (useWhisperFallback || !SR) {
@@ -226,9 +234,17 @@ function _startWhisperListening() {
           silenceTimer = setTimeout(() => {
             if (isListening && fullTranscript.trim()) {
               const result = fullTranscript.trim();
-              isListening = false;
-              if (onTranscriptCb) onTranscriptCb(result, true);
-              if (onEndCb) onEndCb(result);
+              // Fully clean up so the next mic press starts fresh
+              isListening   = false;
+              whisperActive = false;
+              mediaRecorder = null;
+              const _onTranscript = onTranscriptCb;
+              const _onEnd        = onEndCb;
+              onTranscriptCb = null;
+              onEndCb        = null;
+              onErrorCb      = null;
+              if (_onTranscript) _onTranscript(result, true);
+              if (_onEnd)        _onEnd(result);
             }
           }, 600);
           return; // Don't restart — we have a complete answer
