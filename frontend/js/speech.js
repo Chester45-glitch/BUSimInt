@@ -90,7 +90,7 @@ let onEndCb        = null;
 let onErrorCb      = null;
 let networkRetries = 0;
 let micStream      = null; // Keep mic stream alive to prevent network errors
-let useWhisperFallback = localStorage.getItem('stt_use_whisper') === 'true'; // Switch to Whisper after repeated network failures
+let useWhisperFallback = false; // Reset each mic press — network errors are often transient
 const MAX_NETWORK_RETRIES = 2; // Switch to Whisper after 2 failures, not 3
 
 export function isSpeechRecognitionSupported() {
@@ -127,6 +127,7 @@ export async function startListening(onTranscript, onEnd, onError) {
   onErrorCb      = onError;
   fullTranscript = '';
   networkRetries = 0;
+  useWhisperFallback = false; // Give Web Speech API a fresh chance every mic press
   isListening    = true;
 
   if (useWhisperFallback || !SR) {
@@ -258,6 +259,7 @@ function _startWhisperListening() {
     let speechOnSince  = null; // when loud audio first appeared (sustain check)
     let silenceStart   = null;
     let vadRunning     = true;
+    const VAD_STARTUP_GRACE_MS = 800; // ignore audio for first 800ms — prevents transition noise from triggering hasSpeech
 
     const tick = () => {
       if (!vadRunning || !whisperActive || !isListening) return;
@@ -275,6 +277,12 @@ function _startWhisperListening() {
       const elapsed = Date.now() - startTime;
 
       if (rms >= VAD_SPEECH_THRESHOLD) {
+        // Ignore audio during the startup grace window — prevents transition
+        // noise (from switching off Web Speech API) from prematurely setting hasSpeech
+        if (elapsed < VAD_STARTUP_GRACE_MS) {
+          requestAnimationFrame(tick);
+          return;
+        }
         // Track how long the loud audio has been sustained
         if (!speechOnSince) speechOnSince = Date.now();
         // Only mark hasSpeech after sustained loud audio — prevents a single
@@ -434,11 +442,10 @@ function _startRecognition(SR) {
         }, 900 * networkRetries);
         return;
       }
-      // Persistent network failures → switch to Whisper permanently
+      // Persistent network failures → switch to Whisper for this mic-press session
       console.log('[STT] Switching to Whisper fallback after persistent network errors');
       useWhisperFallback = true;
       networkRetries = 0;
-      localStorage.setItem('stt_use_whisper', 'true');
       if (isListening) {
         if (onTranscriptCb) onTranscriptCb('', false);
         _startWhisperListening();
