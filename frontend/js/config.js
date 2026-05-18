@@ -35,7 +35,7 @@ const Config = {
     { value: 'voice', label: 'Voice Mode', icon: '◎', desc: 'Speak your responses' },
   ],
 
-  SPEECH: { LANG: 'en-US', SILENCE_TIMEOUT_MS: 2500 },
+  SPEECH: { LANG: 'en-US', SILENCE_TIMEOUT_MS: 800 },
 };
 
 export default Config;

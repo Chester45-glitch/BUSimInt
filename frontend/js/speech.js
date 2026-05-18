@@ -163,10 +163,10 @@ let vadAudioCtx    = null; // Web Audio context for voice activity detection
 // 12 was too low — room noise alone set hasSpeech=true before any speech.
 const VAD_SILENCE_THRESHOLD  = 10;   // RMS below this = silence
 const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = real speech (raised from 12)
-const VAD_SPEECH_SUSTAIN_MS  = 120;  // speech must sustain this long before hasSpeech=true
-const VAD_SILENCE_MS         = 900;  // ms of silence after speech before we stop
+const VAD_SPEECH_SUSTAIN_MS  = 80;   // speech must sustain this long before hasSpeech=true
+const VAD_SILENCE_MS         = 500;  // ms of silence after speech before we stop
 const VAD_MAX_MS             = 45000; // safety cap: stop after 45 s regardless
-const VAD_MIN_MS             = 300;  // don't stop before 300 ms (avoid clipping first word)
+const VAD_MIN_MS             = 150;  // don't stop before 150 ms (avoid clipping first word)
 
 function _startWhisperListening() {
   if (!isListening) return;
@@ -229,25 +229,16 @@ function _startWhisperListening() {
         const text = (data.text || '').trim();
         if (text) {
           fullTranscript = text;
-          if (onTranscriptCb) onTranscriptCb(text, false);
-          // Short pause after processing before calling onEnd
-          clearTimeout(silenceTimer);
-          silenceTimer = setTimeout(() => {
-            if (isListening && fullTranscript.trim()) {
-              const result = fullTranscript.trim();
-              // Fully clean up so the next mic press starts fresh
-              isListening   = false;
-              whisperActive = false;
-              mediaRecorder = null;
-              const _onTranscript = onTranscriptCb;
-              const _onEnd        = onEndCb;
-              onTranscriptCb = null;
-              onEndCb        = null;
-              onErrorCb      = null;
-              if (_onTranscript) _onTranscript(result, true);
-              if (_onEnd)        _onEnd(result);
-            }
-          }, 600);
+          isListening   = false;
+          whisperActive = false;
+          mediaRecorder = null;
+          const _onTranscript = onTranscriptCb;
+          const _onEnd        = onEndCb;
+          onTranscriptCb = null;
+          onEndCb        = null;
+          onErrorCb      = null;
+          if (_onTranscript) _onTranscript(text, true);
+          if (_onEnd)        _onEnd(text);
           return; // Don't restart — we have a complete answer
         }
       }
@@ -276,7 +267,7 @@ function _startWhisperListening() {
     let speechOnSince  = null; // when loud audio first appeared (sustain check)
     let silenceStart   = null;
     let vadRunning     = true;
-    const VAD_STARTUP_GRACE_MS = 200; // ignore audio for first 200ms — prevents transition noise from triggering hasSpeech
+    const VAD_STARTUP_GRACE_MS = 50; // ignore audio for first 50ms — prevents transition noise from triggering hasSpeech
 
     const tick = () => {
       if (!vadRunning || !whisperActive || !isListening) return;
