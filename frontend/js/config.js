@@ -1,11 +1,12 @@
 // js/config.js — Central configuration
+// ⚠️ REPLACE the URL below with your actual Render backend URL
 const Config = {
-  // ⚠️ Update this to your Render backend URL after deploying
   API_BASE_URL: (() => {
     const h = window.location.hostname;
     if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:3001/api';
-    // Production: set your Render URL here
-    return 'https://your-render-backend.onrender.com/api';
+    // 🔴 CHANGE THIS to your real Render URL, e.g.:
+    // return 'https://interview-sim-api.onrender.com/api';
+    return 'https://busimint.onrender.com/api';
   })(),
 
   INTERVIEW_TYPES: [
@@ -32,10 +33,7 @@ const Config = {
     { value: 'voice', label: 'Voice Mode', icon: '🎙️', desc: 'Speak your responses' },
   ],
 
-  SPEECH: {
-    LANG: 'en-US',
-    SILENCE_TIMEOUT_MS: 2500,
-  },
+  SPEECH: { LANG: 'en-US', SILENCE_TIMEOUT_MS: 2500 },
 };
 
 export default Config;
