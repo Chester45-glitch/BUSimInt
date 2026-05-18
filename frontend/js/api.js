@@ -1,27 +1,24 @@
 // js/api.js — All backend API communication
 import Config from './config.js';
+import { getUser } from './auth.js';
 
-/**
- * Generic fetch wrapper with error handling
- */
 async function apiFetch(endpoint, options = {}) {
   const url = `${Config.API_BASE_URL}${endpoint}`;
+  const user = getUser();
 
-  const defaultHeaders = { 'Content-Type': 'application/json' };
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(user ? { 'x-user-id': user.id } : {}),
+    ...(options.headers || {}),
+  };
 
   try {
-    const response = await fetch(url, {
-      ...options,
-      headers: { ...defaultHeaders, ...(options.headers || {}) }
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
     }
-
-    return await response.json();
-
+    return await res.json();
   } catch (err) {
     if (err.name === 'TypeError' && err.message.includes('fetch')) {
       throw new Error('Cannot connect to server. Is the backend running?');
@@ -30,50 +27,30 @@ async function apiFetch(endpoint, options = {}) {
   }
 }
 
-/**
- * Start a new interview session — get the opening message
- */
 export async function startInterview(config) {
   return apiFetch('/interview/start', {
     method: 'POST',
-    body: JSON.stringify({ config })
+    body: JSON.stringify({ config }),
   });
 }
 
-/**
- * Send a user message and get the next interviewer response
- */
-export async function sendMessage(messages, config) {
+export async function sendMessage(messages, config, sessionId) {
   return apiFetch('/interview/message', {
     method: 'POST',
-    body: JSON.stringify({ messages, config })
+    body: JSON.stringify({ messages, config, sessionId }),
   });
 }
 
-/**
- * Analyze the full interview transcript
- */
-export async function analyzeInterview(transcript, config) {
+export async function analyzeInterview(transcript, config, sessionId) {
   return apiFetch('/analysis/analyze', {
     method: 'POST',
-    body: JSON.stringify({ transcript, config })
+    body: JSON.stringify({ transcript, config, sessionId }),
   });
 }
 
-/**
- * Convert text to speech audio
- * Returns { useBrowserTTS, audioContent?, text }
- */
-export async function synthesizeSpeech(text, voice = 'default') {
+export async function synthesizeSpeech(text) {
   return apiFetch('/tts/synthesize', {
     method: 'POST',
-    body: JSON.stringify({ text, voice })
+    body: JSON.stringify({ text }),
   });
-}
-
-/**
- * Health check
- */
-export async function checkHealth() {
-  return apiFetch('/health');
 }

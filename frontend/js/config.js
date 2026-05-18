@@ -1,31 +1,33 @@
 // js/config.js — Central configuration
-// ⚠️ REPLACE the URL below with your actual Render backend URL
 const Config = {
   API_BASE_URL: (() => {
     const h = window.location.hostname;
     if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:3001/api';
-    // 🔴 CHANGE THIS to your real Render URL, e.g.:
-    // return 'https://interview-sim-api.onrender.com/api';
     return 'https://busimint.onrender.com/api';
   })(),
 
+  // Your Google OAuth Client ID from Google Cloud Console
+  // Authorized origins: https://bu-simint.vercel.app
+  // Authorized redirect URIs: https://bu-simint.vercel.app
+  GOOGLE_CLIENT_ID: '319842770289-crkihr84al4t270s38p918aj0d2pd8fe.apps.googleusercontent.com',
+
   INTERVIEW_TYPES: [
-    { value: 'Software Engineering', label: 'Software Engineering', icon: '💻', color: '#6366F1' },
-    { value: 'IT Support',           label: 'IT Support',           icon: '🛠️', color: '#0EA5E9' },
-    { value: 'Customer Service',     label: 'Customer Service',     icon: '🎧', color: '#F43F5E' },
-    { value: 'Nursing',              label: 'Nursing / Healthcare', icon: '🏥', color: '#10B981' },
-    { value: 'Business Management',  label: 'Business / Management',icon: '📊', color: '#F59E0B' },
-    { value: 'Marketing',            label: 'Marketing',            icon: '📣', color: '#8B5CF6' },
-    { value: 'Teaching',             label: 'Teaching / Education', icon: '📚', color: '#06B6D4' },
-    { value: 'Finance',              label: 'Finance / Accounting', icon: '💰', color: '#84CC16' },
-    { value: 'General',              label: 'General / HR',         icon: '👔', color: '#6B7280' },
+    { value: 'Software Engineering', label: 'Software Engineering', icon: '💻' },
+    { value: 'IT Support',           label: 'IT Support',           icon: '🛠️' },
+    { value: 'Customer Service',     label: 'Customer Service',     icon: '🎧' },
+    { value: 'Nursing',              label: 'Nursing / Healthcare', icon: '🏥' },
+    { value: 'Business Management',  label: 'Business / Management',icon: '📊' },
+    { value: 'Marketing',            label: 'Marketing',            icon: '📣' },
+    { value: 'Teaching',             label: 'Teaching / Education', icon: '📚' },
+    { value: 'Finance',              label: 'Finance / Accounting', icon: '💰' },
+    { value: 'General',              label: 'General / HR',         icon: '👔' },
   ],
 
   EXPERIENCE_LEVELS: [
     { value: 'Entry Level (0-1 years)', label: 'Entry Level', sub: '0–1 yrs' },
-    { value: 'Junior (1-3 years)',       label: 'Junior',      sub: '1–3 yrs' },
-    { value: 'Mid-Level (3-5 years)',    label: 'Mid-Level',   sub: '3–5 yrs' },
-    { value: 'Senior (5+ years)',        label: 'Senior',      sub: '5+ yrs'  },
+    { value: 'Junior (1-3 years)',      label: 'Junior',      sub: '1–3 yrs' },
+    { value: 'Mid-Level (3-5 years)',   label: 'Mid-Level',   sub: '3–5 yrs' },
+    { value: 'Senior (5+ years)',       label: 'Senior',      sub: '5+ yrs'  },
   ],
 
   MODES: [

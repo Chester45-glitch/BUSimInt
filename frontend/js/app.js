@@ -1,10 +1,11 @@
 // js/app.js — Main application controller
 import Config from './config.js';
 import InterviewState from './interviewState.js';
+import { getUser, isLoggedIn } from './auth.js';
 import { startInterview, sendMessage, analyzeInterview } from './api.js';
+import { renderSidebar, highlightActiveSession } from './history.js';
 import {
-  speakText, stopSpeaking, startListening, stopListening,
-  isSpeechRecognitionSupported
+  speakText, stopSpeaking, startListening, stopListening, isSpeechRecognitionSupported
 } from './speech.js';
 import {
   showScreen, renderSetupScreen, selectCard, validateSetupAndGetErrors,
@@ -16,11 +17,164 @@ import {
 
 // ── Init ─────────────────────────────────────────────────────
 function init() {
+  if (!isLoggedIn()) {
+    showScreen('login-screen');
+    initGoogleLogin();
+    return;
+  }
+
+  showAppShell();
   renderSetupScreen();
   bindSetupEvents();
   bindInterviewEvents();
   bindModalEvents();
   showScreen('setup-screen');
+
+  // Load sidebar history
+  renderSidebar(handleLoadSession, handleNewChat);
+}
+
+function showAppShell() {
+  document.getElementById('app-shell').style.display = 'flex';
+  document.getElementById('login-screen').style.display = 'none';
+}
+
+// ── Google Login ──────────────────────────────────────────────
+function initGoogleLogin() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app-shell').style.display = 'none';
+
+  // Load Google Identity Services script
+  if (!window.google) {
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.onload = setupGoogleButton;
+    document.head.appendChild(script);
+  } else {
+    setupGoogleButton();
+  }
+}
+
+function setupGoogleButton() {
+  if (!Config.GOOGLE_CLIENT_ID || Config.GOOGLE_CLIENT_ID.includes('YOUR_GOOGLE')) {
+    document.getElementById('google-btn-container').innerHTML =
+      `<div style="color:#e53e3e;font-size:.85rem;padding:12px;text-align:center;">
+        ⚠️ Google Client ID not configured.<br>
+        Set <code>GOOGLE_CLIENT_ID</code> in <code>config.js</code>.
+      </div>`;
+    return;
+  }
+
+  window.google.accounts.id.initialize({
+    client_id: Config.GOOGLE_CLIENT_ID,
+    callback: handleGoogleCredential,
+    auto_select: false,
+    cancel_on_tap_outside: true,
+  });
+
+  window.google.accounts.id.renderButton(
+    document.getElementById('google-btn-container'),
+    {
+      type: 'standard',
+      theme: 'outline',
+      size: 'large',
+      text: 'continue_with',
+      shape: 'rectangular',
+      logo_alignment: 'left',
+      width: 320,
+    }
+  );
+}
+
+async function handleGoogleCredential(response) {
+  const btn = document.getElementById('google-btn-container');
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+
+  try {
+    showLoginLoading(true);
+    const { verifyGoogleCredential } = await import('./auth.js');
+    await verifyGoogleCredential(response.credential);
+
+    // Refresh page to boot into app
+    window.location.reload();
+  } catch (err) {
+    console.error('[Login]', err);
+    errEl.textContent = `Sign-in failed: ${err.message}`;
+    errEl.style.display = 'block';
+    showLoginLoading(false);
+  }
+}
+
+function showLoginLoading(loading) {
+  const spinner = document.getElementById('login-spinner');
+  if (spinner) spinner.style.display = loading ? 'block' : 'none';
+}
+
+// ── New Chat / Load Session ───────────────────────────────────
+function handleNewChat() {
+  InterviewState.reset();
+  document.getElementById('chat-messages').innerHTML = '';
+  const ta = document.getElementById('chat-input');
+  if (ta) { ta.value = ''; ta.style.height = 'auto'; }
+  showScreen('setup-screen');
+  renderSetupScreen();
+  document.querySelectorAll('.sidebar-session-item').forEach(el => el.classList.remove('active'));
+}
+
+async function handleLoadSession(sessionId) {
+  // TODO: load past session transcript and analysis into view
+  showToast('Loading past session…', 'info');
+  highlightActiveSession(sessionId);
+
+  const { fetchSession } = await import('./history.js');
+  const data = await fetchSession(sessionId);
+  if (!data) { showToast('Could not load session', 'error'); return; }
+
+  const { session, messages, analysis } = data;
+
+  if (analysis) {
+    // Show analysis screen for completed sessions
+    InterviewState.setConfig({
+      type: session.interview_type,
+      jobTitle: session.job_title,
+      experienceLevel: session.experience_level,
+      mode: session.mode,
+    });
+    showScreen('analysis-screen');
+
+    const loading = document.getElementById('analysis-loading');
+    const content = document.getElementById('analysis-content');
+    if (loading) loading.style.display = 'none';
+    if (content) content.style.display = 'block';
+
+    renderAnalysis(
+      { analysis },
+      { totalExchanges: messages.filter(m => m.role === 'user').length, jobTitle: session.job_title, interviewType: session.interview_type }
+    );
+    triggerAnalysisAnimations();
+  } else {
+    // Active session — resume chat view
+    document.getElementById('chat-messages').innerHTML = '';
+    InterviewState.reset();
+    InterviewState.setConfig({
+      type: session.interview_type,
+      jobTitle: session.job_title,
+      experienceLevel: session.experience_level,
+      mode: session.mode || 'chat',
+    });
+    InterviewState.startSession(sessionId);
+
+    messages.forEach(m => {
+      InterviewState.addMessage(m.role, m.content);
+      appendMessage(m.role, m.content, false);
+    });
+
+    setInterviewHeader(InterviewState.config);
+    showScreen('interview-screen');
+    if (InterviewState.isVoiceMode()) showVoiceUI();
+    else showChatUI();
+  }
 }
 
 // ── Setup Events ─────────────────────────────────────────────
@@ -30,8 +184,6 @@ function bindSetupEvents() {
     if (!card) return;
     InterviewState.setConfig({ type: card.dataset.value });
     selectCard(document.getElementById('interview-type-grid'), card.dataset.value);
-    const inp = document.getElementById('job-title-input');
-    if (inp && !inp.value) inp.placeholder = `e.g. ${card.dataset.value} Specialist`;
   });
 
   document.getElementById('experience-grid').addEventListener('click', e => {
@@ -45,8 +197,7 @@ function bindSetupEvents() {
     const card = e.target.closest('.mode-card');
     if (!card) return;
     if (card.dataset.value === 'voice' && !isSpeechRecognitionSupported()) {
-      showToast('Voice input requires Chrome. Switching to Chat mode.', 'error');
-      return;
+      showToast('Voice input requires Chrome or Edge browser.', 'error'); return;
     }
     InterviewState.setConfig({ mode: card.dataset.value });
     selectCard(document.getElementById('mode-grid'), card.dataset.value);
@@ -74,22 +225,25 @@ async function handleStartInterview() {
     InterviewState.addMessage('assistant', data.message);
 
     setInterviewHeader(InterviewState.config);
+    highlightActiveSession(data.sessionId);
+
+    // Refresh sidebar to show new session
+    renderSidebar(handleLoadSession, handleNewChat);
+
     showScreen('interview-screen');
 
     if (InterviewState.isVoiceMode()) {
       showVoiceUI();
+      appendMessage('assistant', data.message);
       setVoiceState('speaking');
       InterviewState.setSpeaking(true);
-      appendMessage('assistant', data.message);
-      await speakText(data.message,
-        () => setVoiceState('speaking'),
-        () => { setVoiceState('idle'); InterviewState.setSpeaking(false); }
-      );
+      await speakText(data.message, () => setVoiceState('speaking'), () => {
+        setVoiceState('idle'); InterviewState.setSpeaking(false);
+      });
     } else {
       showChatUI();
       appendMessage('assistant', data.message);
     }
-
   } catch (err) {
     console.error('[Start]', err);
     showSetupError(`Failed to start: ${err.message}`);
@@ -102,7 +256,7 @@ async function handleStartInterview() {
 function showChatUI() {
   document.getElementById('chat-interface').style.display = 'flex';
   document.getElementById('voice-interface').style.display = 'none';
-  document.getElementById('chat-input').focus();
+  setTimeout(() => document.getElementById('chat-input')?.focus(), 100);
 }
 
 function showVoiceUI() {
@@ -118,7 +272,6 @@ function bindInterviewEvents() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSend(); }
   });
 
-  // Speak button on messages (delegated)
   document.getElementById('chat-messages').addEventListener('click', e => {
     const btn = e.target.closest('.speak-btn');
     if (!btn) return;
@@ -128,10 +281,9 @@ function bindInterviewEvents() {
 
   document.getElementById('voice-btn')?.addEventListener('click', handleVoiceBtnClick);
   document.getElementById('end-interview-btn').addEventListener('click', handleEndRequest);
-  document.getElementById('restart-btn')?.addEventListener('click', handleRestart);
+  document.getElementById('restart-btn')?.addEventListener('click', handleNewChat);
   document.getElementById('download-btn')?.addEventListener('click', handleDownload);
 
-  // Auto-resize textarea
   const ta = document.getElementById('chat-input');
   if (ta) {
     ta.addEventListener('input', () => {
@@ -141,17 +293,15 @@ function bindInterviewEvents() {
   }
 }
 
-// ── Chat Send ─────────────────────────────────────────────────
 async function handleChatSend() {
   const input = document.getElementById('chat-input');
-  const text = input.value.trim();
+  const text = input?.value.trim();
   if (!text || InterviewState.isLoading || !InterviewState.isActive) return;
   input.value = '';
   input.style.height = 'auto';
   await submitUserMessage(text);
 }
 
-// ── Voice Button ──────────────────────────────────────────────
 function handleVoiceBtnClick() {
   if (InterviewState.isSpeaking) {
     stopSpeaking(); InterviewState.setSpeaking(false); setVoiceState('idle'); return;
@@ -186,7 +336,6 @@ function handleVoiceBtnClick() {
   );
 }
 
-// ── Core Message Exchange ─────────────────────────────────────
 async function submitUserMessage(text) {
   if (!InterviewState.isActive) return;
 
@@ -200,51 +349,45 @@ async function submitUserMessage(text) {
   setInputEnabled(false);
 
   try {
-    const response = await sendMessage(InterviewState.getApiMessages(), InterviewState.config);
-    const aiMsg = response.message;
+    const response = await sendMessage(
+      InterviewState.getApiMessages(),
+      InterviewState.config,
+      InterviewState.sessionId
+    );
 
     hideTypingIndicator();
-    InterviewState.addMessage('assistant', aiMsg);
+    InterviewState.addMessage('assistant', response.message);
     InterviewState.saveToStorage();
-
-    // Update live sidebar with latest transcript
     updateLiveSidebar(InterviewState.transcript);
-
-    appendMessage('assistant', aiMsg);
+    appendMessage('assistant', response.message);
 
     if (InterviewState.isVoiceMode()) {
       setVoiceState('speaking');
       InterviewState.setSpeaking(true);
-      await speakText(aiMsg, () => {}, () => {
-        InterviewState.setSpeaking(false);
-        setVoiceState('idle');
+      await speakText(response.message, () => {}, () => {
+        InterviewState.setSpeaking(false); setVoiceState('idle');
       });
     }
-
   } catch (err) {
     hideTypingIndicator();
-    console.error('[Message]', err);
     showToast(`Error: ${err.message}`, 'error');
     if (InterviewState.isVoiceMode()) setVoiceState('idle');
   } finally {
     InterviewState.setLoading(false);
     setInputEnabled(true);
-    if (!InterviewState.isVoiceMode()) document.getElementById('chat-input').focus();
+    if (!InterviewState.isVoiceMode()) document.getElementById('chat-input')?.focus();
   }
 }
 
 function setInputEnabled(enabled) {
-  const chatInput = document.getElementById('chat-input');
-  const sendBtn   = document.getElementById('chat-send-btn');
-  const voiceBtn  = document.getElementById('voice-btn');
-  if (chatInput) chatInput.disabled = !enabled;
-  if (sendBtn)   sendBtn.disabled   = !enabled;
-  if (voiceBtn && !InterviewState.isListening && !InterviewState.isSpeaking) {
-    voiceBtn.disabled = !enabled;
-  }
+  ['chat-input', 'chat-send-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  });
+  const vb = document.getElementById('voice-btn');
+  if (vb && !InterviewState.isListening && !InterviewState.isSpeaking) vb.disabled = !enabled;
 }
 
-// ── End Interview ─────────────────────────────────────────────
 function handleEndRequest() {
   stopSpeaking(); stopListening();
   showEndConfirmModal(
@@ -266,7 +409,11 @@ async function handleAnalyzeAndShow() {
   if (errMsg)  errMsg.style.display  = 'none';
 
   try {
-    const result = await analyzeInterview(InterviewState.getApiMessages(), InterviewState.config);
+    const result = await analyzeInterview(
+      InterviewState.getApiMessages(),
+      InterviewState.config,
+      InterviewState.sessionId
+    );
 
     if (loading) loading.style.display = 'none';
     if (content) content.style.display = 'block';
@@ -274,6 +421,8 @@ async function handleAnalyzeAndShow() {
     renderAnalysis(result, result.metadata);
     triggerAnalysisAnimations();
 
+    // Refresh sidebar to show updated score
+    renderSidebar(handleLoadSession, handleNewChat);
   } catch (err) {
     console.error('[Analysis]', err);
     if (loading) loading.style.display = 'none';
@@ -282,36 +431,23 @@ async function handleAnalyzeAndShow() {
   }
 }
 
-// ── Restart ───────────────────────────────────────────────────
-function handleRestart() {
-  InterviewState.reset();
-  document.getElementById('chat-messages').innerHTML = '';
-  const ta = document.getElementById('chat-input');
-  if (ta) { ta.value = ''; ta.style.height = 'auto'; }
-  showScreen('setup-screen');
-  renderSetupScreen();
-}
-
-// ── Download Transcript ───────────────────────────────────────
 function handleDownload() {
   const lines = InterviewState.transcript.map(m => {
     const role = m.role === 'assistant' ? 'INTERVIEWER' : 'CANDIDATE';
     return `[${new Date(m.timestamp).toLocaleTimeString()}] ${role}:\n${m.content}\n`;
   }).join('\n---\n\n');
-
-  const header = `INTERVIEW TRANSCRIPT\n${'='.repeat(40)}\nType: ${InterviewState.config.type}\nJob: ${InterviewState.config.jobTitle||'N/A'}\nDate: ${new Date().toLocaleString()}\n${'='.repeat(40)}\n\n`;
-  const blob = new Blob([header + lines], { type: 'text/plain' });
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `interview-${Date.now()}.txt` });
-  a.click();
-  URL.revokeObjectURL(a.href);
+  const header = `INTERVIEW TRANSCRIPT\n${'='.repeat(40)}\nType: ${InterviewState.config.type}\nJob: ${InterviewState.config.jobTitle || 'N/A'}\nDate: ${new Date().toLocaleString()}\n${'='.repeat(40)}\n\n`;
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([header + lines], { type: 'text/plain' })),
+    download: `interview-${Date.now()}.txt`,
+  });
+  a.click(); URL.revokeObjectURL(a.href);
 }
 
-// ── Modal backdrop close ──────────────────────────────────────
 function bindModalEvents() {
   document.getElementById('end-modal')?.addEventListener('click', e => {
     if (e.target === e.currentTarget) e.currentTarget.classList.remove('modal--visible');
   });
 }
 
-// Start when DOM is ready
 document.addEventListener('DOMContentLoaded', init);
