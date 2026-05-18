@@ -64,11 +64,22 @@ export async function renderSidebar(onSelectSession, onNewChat) {
 
   // Render skeleton first
   sidebar.innerHTML = `
-    <!-- Collapsed: single centered chat icon -->
-    <div class="sidebar-collapsed-icon">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-      </svg>
+    <!-- Collapsed strip: logo top, chat icon middle, avatar bottom -->
+    <div class="sidebar-collapsed-strip">
+      <div class="sidebar-collapsed-logo">
+        <img src="./BUSimInt_Logo.png" alt="BUSimInt">
+      </div>
+      <div class="sidebar-collapsed-chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+        </svg>
+      </div>
+      <div class="sidebar-collapsed-avatar">
+        ${user.avatarUrl
+          ? `<img src="${user.avatarUrl}" alt="${user.name || ''}" onerror="this.style.display='none'">`
+          : `<span class="sidebar-collapsed-avatar-fallback">${(user.name || user.email || '?')[0].toUpperCase()}</span>`
+        }
+      </div>
     </div>
 
     <div class="sidebar-top">
@@ -237,12 +248,30 @@ async function deleteSession(sessionId) {
   const user = getUser();
   if (!user) return;
   try {
-    await fetch(`${Config.API_BASE_URL}/sessions/${sessionId}`, {
+    const res = await fetch(`${Config.API_BASE_URL}/sessions/${sessionId}`, {
       method: 'DELETE',
-      headers: { 'x-user-id': user.id }
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': user.id
+      }
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    console.log('[History] Session deleted:', sessionId);
   } catch (e) {
     console.warn('[History] Delete failed:', e.message);
+    // CORS fallback: try POST-based delete if DELETE is blocked
+    try {
+      await fetch(`${Config.API_BASE_URL}/sessions/${sessionId}/delete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-id': user.id
+        }
+      });
+      console.log('[History] Session deleted via POST fallback:', sessionId);
+    } catch (e2) {
+      console.warn('[History] Delete fallback also failed:', e2.message);
+    }
   }
 }
 

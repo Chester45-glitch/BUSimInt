@@ -229,27 +229,46 @@ function _startWhisperListening() {
   }, 4000);
 }
 
+// Track whether the current recognition instance was intentionally stopped by us
+let _recognitionStopping = false;
+
 function _startRecognition(SR) {
   if (!isListening) return;
 
+  // Destroy any prior instance cleanly before creating a new one
+  if (recognition) {
+    const old = recognition;
+    recognition = null;
+    _recognitionStopping = true;
+    old.onstart = null;
+    old.onresult = null;
+    old.onerror = null;
+    old.onend = null;
+    try { old.abort(); } catch (_) {}
+    _recognitionStopping = false;
+  }
+
+  let rec;
   try {
-    recognition = new SR();
+    rec = new SR();
   } catch (e) {
     if (onErrorCb) onErrorCb('Could not initialise microphone: ' + e.message);
     return;
   }
 
-  recognition.lang            = Config.SPEECH.LANG;
-  recognition.continuous      = false;  // short sessions avoid network timeouts
-  recognition.interimResults  = true;
-  recognition.maxAlternatives = 1;
+  recognition = rec;
 
-  recognition.onstart = () => {
-    networkRetries = 0; // reset on successful start
+  rec.lang            = Config.SPEECH.LANG;
+  rec.continuous      = true;   // continuous avoids the onend→restart→aborted cycle
+  rec.interimResults  = true;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = () => {
+    networkRetries = 0;
     console.log('[STT] Recognition started');
   };
 
-  recognition.onresult = (event) => {
+  rec.onresult = (event) => {
     let interim = '';
     let final_  = '';
 
@@ -264,60 +283,52 @@ function _startRecognition(SR) {
     const display = (fullTranscript + interim).trim();
     if (onTranscriptCb) onTranscriptCb(display, false);
 
-    // Reset silence timer
+    // Reset silence timer on every speech event
     clearTimeout(silenceTimer);
-    silenceTimer = setTimeout(() => {
-      if (fullTranscript.trim() && isListening) {
-        const result = fullTranscript.trim();
-        isListening = false;
-        clearTimeout(silenceTimer);
-        if (onTranscriptCb) onTranscriptCb(result, true);
-        if (onEndCb) onEndCb(result);
-      }
-    }, Config.SPEECH.SILENCE_TIMEOUT_MS);
+    if (fullTranscript.trim() || interim.trim()) {
+      silenceTimer = setTimeout(() => {
+        if (fullTranscript.trim() && isListening) {
+          const result = fullTranscript.trim();
+          // Stop cleanly before calling onEnd
+          _stopRecognitionClean();
+          if (onTranscriptCb) onTranscriptCb(result, true);
+          if (onEndCb) onEndCb(result);
+        }
+      }, Config.SPEECH.SILENCE_TIMEOUT_MS);
+    }
   };
 
-  recognition.onerror = (event) => {
+  rec.onerror = (event) => {
+    if (rec !== recognition) return; // stale instance — ignore
     const err = event.error;
+
+    // aborted = we called abort/stop ourselves — never restart from here
+    if (err === 'aborted') return;
+
+    // no-speech is normal with continuous mode — do nothing
+    if (err === 'no-speech') return;
+
     console.warn('[STT] error:', err);
-
-    if (err === 'no-speech') {
-      // Normal — restart to keep listening
-      return;
-    }
-
-    if (err === 'aborted') {
-      // We triggered this via stop() — ignore
-      return;
-    }
 
     if (err === 'network') {
       networkRetries++;
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
       if (networkRetries <= MAX_NETWORK_RETRIES && isListening) {
-        // Re-acquire mic stream on retry to reset audio pipeline
-        if (networkRetries > 1) {
-          micStream?.getTracks().forEach(t => t.stop());
-          micStream = null;
-          setTimeout(async () => {
-            if (!isListening) return;
-            await ensureMicPermission();
-            setTimeout(() => {
-              if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
-            }, 300);
-          }, 800 * networkRetries);
-        } else {
-          setTimeout(() => {
-            if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
-          }, 600 * networkRetries);
-        }
+        micStream?.getTracks().forEach(t => t.stop());
+        micStream = null;
+        setTimeout(async () => {
+          if (!isListening) return;
+          await ensureMicPermission();
+          if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+        }, 900 * networkRetries);
         return;
       }
-      // Switch to Whisper fallback
-      console.log('[STT] Switching to Whisper fallback after repeated network errors');
+      // Persistent network failures → switch to Whisper
+      console.log('[STT] Switching to Whisper fallback');
       useWhisperFallback = true;
+      recognition = null;
       if (isListening) {
-        if (onTranscriptCb) onTranscriptCb('', false); // clear interim
+        if (onTranscriptCb) onTranscriptCb('', false);
         _startWhisperListening();
       }
       return;
@@ -326,41 +337,61 @@ function _startRecognition(SR) {
     if (err === 'not-allowed' || err === 'permission-denied') {
       isListening = false;
       clearTimeout(silenceTimer);
+      recognition = null;
       if (onErrorCb) onErrorCb('Microphone access denied. Please allow microphone access in your browser settings.');
       return;
     }
 
-    // Any other error — restart if still listening
+    // Any other error with continuous mode: try to restart once
     if (isListening) {
+      recognition = null;
       setTimeout(() => {
         if (isListening) _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
-      }, 500);
+      }, 600);
     }
   };
 
-  recognition.onend = () => {
-    // Auto-restart while still listening and silence timer hasn't fired
+  rec.onend = () => {
+    if (rec !== recognition) return; // stale — ignore
+    // With continuous=true, onend only fires when recognition truly stops
+    // (network drop, browser killed it, etc.) — restart if we're still listening
     if (isListening) {
       setTimeout(() => {
-        if (isListening) {
+        if (isListening && recognition === rec) {
+          recognition = null;
           _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
         }
-      }, 150);
+      }, 300);
     }
   };
 
   try {
-    recognition.start();
+    rec.start();
   } catch (err) {
     console.error('[STT] start() failed:', err);
-    // InvalidStateError = already started — retry after brief pause
+    recognition = null;
     if (err.name === 'InvalidStateError') {
       setTimeout(() => {
         if (isListening) _startRecognition(SR);
-      }, 400);
+      }, 500);
     } else {
       if (onErrorCb) onErrorCb('Could not start microphone: ' + err.message);
     }
+  }
+}
+
+// Cleanly stop the active recognition without triggering a restart
+function _stopRecognitionClean() {
+  isListening = false;
+  clearTimeout(silenceTimer);
+  if (recognition) {
+    const r = recognition;
+    recognition = null;
+    r.onstart = null;
+    r.onresult = null;
+    r.onerror = null;
+    r.onend = null;
+    try { r.abort(); } catch (_) {}
   }
 }
 
@@ -374,17 +405,18 @@ export function stopListening() {
   fullTranscript = '';
 
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    try { mediaRecorder.stop(); } catch (e) { /* ignore */ }
+    try { mediaRecorder.stop(); } catch (_) {}
     mediaRecorder = null;
   }
 
   if (recognition) {
-    try {
-      recognition.onend  = null;
-      recognition.onerror = null;
-      recognition.stop();
-    } catch (e) { /* ignore */ }
+    const r = recognition;
     recognition = null;
+    r.onstart = null;
+    r.onresult = null;
+    r.onerror = null;
+    r.onend = null;
+    try { r.abort(); } catch (_) {}
   }
 }
 
