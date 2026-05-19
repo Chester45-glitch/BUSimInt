@@ -34,7 +34,7 @@
 
   --t: .18s cubic-bezier(.4,0,.2,1);
 
-  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-serif: 'DM Sans', system-ui, sans-serif;  /* No cursive — clean sans throughout */
   --font-sans:  'DM Sans', system-ui, sans-serif;
 
   /* Base font size — all rem units scale from this */
@@ -68,7 +68,7 @@ body {
 .setup-wrap { width: 100%; max-width: 720px; }
 
 .setup-header { text-align: center; margin-bottom: 24px; }
-.setup-title { font-family: var(--font-serif); font-size: 1.9rem; color: var(--text); margin-bottom: 4px; }
+.setup-title { font-family: var(--font-sans); font-size: 1.9rem; font-weight: 700; letter-spacing: -.02em; color: var(--text); margin-bottom: 4px; }
 
 .brand {
   display: inline-flex;
@@ -85,8 +85,10 @@ body {
   box-shadow: 0 0 0 4px var(--accent-light);
 }
 .brand-name {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
   color: var(--text);
 }
 .setup-tagline { color: var(--text3); font-size: 1rem; }
@@ -116,7 +118,7 @@ body {
 /* Type grid */
 #interview-type-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px;
 }
 .type-card {
@@ -165,7 +167,7 @@ body {
 /* Experience grid */
 #experience-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 10px;
 }
 .exp-card {
@@ -972,8 +974,9 @@ body {
   /* Emotion ring smaller on mobile */
   .emotion-ring, .emotion-ring svg { width: 80px; height: 80px; }
 
-  #interview-type-grid { grid-template-columns: repeat(2, 1fr); }
-  #experience-grid { grid-template-columns: repeat(2, 1fr); }
+  #interview-type-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  #experience-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  #mode-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .analysis-grid { grid-template-columns: 1fr; }
   .a-card--full { grid-column: 1; }
 
@@ -1497,7 +1500,42 @@ body {
 
   .main-content { padding-left: 0; }
   .login-left { display: none; }
-  .login-right { width: 100%; }
+  .login-right {
+    width: 100%;
+    min-height: 100vh;
+    background: #F8F9FA;
+    padding: 0;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+  .login-form-wrap {
+    max-width: 100%;
+    padding: 40px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  /* Inject a mobile brand header above the form */
+  .login-form-wrap::before {
+    content: '';
+    display: block;
+    width: 48px;
+    height: 48px;
+    background: url('./BUSimInt_Logo.png') center/contain no-repeat, #0A1628;
+    border-radius: 14px;
+    margin: 0 auto 20px;
+  }
+  .login-title {
+    font-size: 1.7rem;
+    text-align: center;
+  }
+  .login-desc {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .login-note { font-size: .82rem; }
+  .google-btn-wrap { justify-content: center; }
+  .login-links { margin-top: auto; padding-top: 24px; }
 
   .mobile-topbar {
     display: flex;
@@ -1519,7 +1557,7 @@ body {
     color: var(--text2);
   }
   .mobile-topbar-title {
-    font-family: var(--font-serif); font-size: 1rem; font-weight: 700; color: var(--text);
+    font-family: var(--font-sans); font-size: 1rem; font-weight: 700; letter-spacing: -.01em; color: var(--text);
   }
   .mobile-logout-btn {
     background: none; border: 1px solid var(--border);
@@ -1530,4 +1568,20 @@ body {
   }
   .mobile-logout-btn:hover { background: #FFF0F3; color: var(--red); border-color: #FFD0D9; }
   #setup-screen { padding-top: 0; }
+}
+
+/* ════════════════════════════════════════════════════════════
+   EXTRA-SMALL PHONES (≤ 390px)
+════════════════════════════════════════════════════════════ */
+@media (max-width: 390px) {
+  :root { font-size: 14px; }
+  #interview-type-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  #experience-grid     { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  #mode-grid           { grid-template-columns: 1fr; gap: 8px; }
+  .type-card  { padding: 10px 8px; }
+  .type-label { font-size: .82rem; }
+  .setup-card { padding: 18px 14px; }
+  .setup-title { font-size: 1.5rem; }
+  .login-form-wrap { padding: 32px 20px 40px; }
+  .login-title { font-size: 1.5rem; }
 }
