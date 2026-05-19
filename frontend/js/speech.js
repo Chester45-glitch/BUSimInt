@@ -191,10 +191,13 @@ let vadAudioCtx    = null; // Web Audio context for voice activity detection
 // VAD tuning constants
 // VAD_SPEECH_THRESHOLD must be well above ambient mic hiss (~5-8 RMS).
 // 12 was too low — room noise alone set hasSpeech=true before any speech.
-const VAD_SILENCE_THRESHOLD  = 10;   // RMS below this = silence
-const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = real speech (raised from 12)
+const VAD_SILENCE_THRESHOLD  = 14;   // RMS below this = silence (raised to close gap with speech threshold)
+const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = real speech
 const VAD_SPEECH_SUSTAIN_MS  = 80;   // speech must sustain this long before hasSpeech=true
-const VAD_SILENCE_MS         = 1200; // ms of CONTINUOUS silence before stopping (natural pause ~400-600ms)
+// Adaptive silence: short answer = stop quickly, long answer = wait longer for natural pauses
+const VAD_SILENCE_SHORT_MS   = 600;  // silence cutoff if user spoke < 3s total
+const VAD_SILENCE_LONG_MS    = 1800; // silence cutoff if user spoke >= 3s (allows mid-sentence pauses)
+const VAD_LONG_SPEECH_MS     = 3000; // threshold between "short" and "long" answer
 const VAD_MAX_MS             = 45000; // safety cap: stop after 45 s regardless
 const VAD_MIN_MS             = 150;  // don't stop before 150 ms (avoid clipping first word)
 
@@ -298,17 +301,18 @@ function _startWhisperListening() {
     const buf          = new Uint8Array(analyser.frequencyBinCount);
     const startTime    = Date.now();
     let hasSpeech      = false;
-    let speechOnSince  = null; // when loud audio first appeared (sustain check)
+    let speechOnSince  = null;
     let silenceStart   = null;
     let vadRunning     = true;
-    const VAD_STARTUP_GRACE_MS = 50; // ignore audio for first 50ms — prevents transition noise from triggering hasSpeech
+    let totalSpeechMs  = 0;
+    let lastSpeechAt   = null;
+    const VAD_STARTUP_GRACE_MS = 50;
 
     const tick = () => {
       if (!vadRunning || !whisperActive || !isListening) return;
 
       analyser.getByteTimeDomainData(buf);
 
-      // Compute RMS on 0-100 scale
       let sum = 0;
       for (let i = 0; i < buf.length; i++) {
         const v = (buf[i] - 128) / 128;
@@ -316,48 +320,38 @@ function _startWhisperListening() {
       }
       const rms = Math.sqrt(sum / buf.length) * 100;
 
-      // Push live level to UI every tick so user sees instant feedback
       if (onLiveAudioCb) onLiveAudioCb(rms);
 
       const elapsed = Date.now() - startTime;
 
       if (rms >= VAD_SPEECH_THRESHOLD) {
-        // Ignore audio during the startup grace window — prevents transition
-        // noise (from switching off Web Speech API) from prematurely setting hasSpeech
-        if (elapsed < VAD_STARTUP_GRACE_MS) {
-          requestAnimationFrame(tick);
-          return;
-        }
-        // Track how long the loud audio has been sustained
+        if (elapsed < VAD_STARTUP_GRACE_MS) { requestAnimationFrame(tick); return; }
         if (!speechOnSince) speechOnSince = Date.now();
-        // Only mark hasSpeech after sustained loud audio — prevents a single
-        // breath/click/noise-spike from prematurely starting the silence timer
+        if (!lastSpeechAt) lastSpeechAt = Date.now();
         if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
           hasSpeech = true;
         }
-        // Voice came back — cancel any pending silence stop
         silenceStart = null;
       } else {
-        speechOnSince = null; // reset sustain on any quiet frame
+        if (lastSpeechAt) { totalSpeechMs += Date.now() - lastSpeechAt; lastSpeechAt = null; }
+        speechOnSince = null;
       }
 
       if (rms < VAD_SILENCE_THRESHOLD && hasSpeech) {
         if (!silenceStart) silenceStart = Date.now();
         const silenceDuration = Date.now() - silenceStart;
+        const silenceCutoff = totalSpeechMs >= VAD_LONG_SPEECH_MS ? VAD_SILENCE_LONG_MS : VAD_SILENCE_SHORT_MS;
 
-        if (silenceDuration >= VAD_SILENCE_MS && elapsed >= VAD_MIN_MS) {
-          // User stopped speaking — commit the recording
-          console.log('[STT Whisper] VAD: silence detected, stopping recording');
+        if (silenceDuration >= silenceCutoff && elapsed >= VAD_MIN_MS) {
+          console.log(`[STT Whisper] VAD stop — speech=${totalSpeechMs}ms cutoff=${silenceCutoff}ms`);
           vadRunning = false;
-          if (onLiveAudioCb) onLiveAudioCb(0); // clear the bar
+          if (onLiveAudioCb) onLiveAudioCb(0);
           if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
           return;
         }
       }
 
-      // Safety cap: stop after VAD_MAX_MS regardless
       if (elapsed >= VAD_MAX_MS) {
-        console.log('[STT Whisper] VAD: max duration reached');
         vadRunning = false;
         if (onLiveAudioCb) onLiveAudioCb(0);
         if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
@@ -438,18 +432,20 @@ function _startRecognition(SR) {
     // Only show the placeholder if nothing has been heard yet
     if (onTranscriptCb) onTranscriptCb(display || '🎙️ Listening…', false);
 
-    // Reset silence timer on every speech event
+    // Reset silence timer on every speech event — duration adapts to answer length
     clearTimeout(silenceTimer);
     if (fullTranscript.trim() || interim.trim()) {
+      // Short answers (< ~6 words): stop quickly. Long answers: give more pause room.
+      const wordCount = (fullTranscript + interim).trim().split(/\s+/).length;
+      const silenceMs = wordCount >= 6 ? 1600 : 800;
       silenceTimer = setTimeout(() => {
         if (fullTranscript.trim() && isListening) {
           const result = fullTranscript.trim();
-          // Stop cleanly before calling onEnd
           _stopRecognitionClean();
           if (onTranscriptCb) onTranscriptCb(result, true);
           if (onEndCb) onEndCb(result);
         }
-      }, Config.SPEECH.SILENCE_TIMEOUT_MS);
+      }, silenceMs);
     }
   };
 
