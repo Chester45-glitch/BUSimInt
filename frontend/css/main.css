@@ -1093,9 +1093,17 @@ body {
 }
 .sidebar--open .sidebar-collapsed-strip { opacity: 0; pointer-events: none; }
 
+/* Top cluster: logo + chat icon stacked */
+.sidebar-collapsed-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
 .sidebar-collapsed-logo {
-  width: 36px; height: 36px;
-  border-radius: 9px;
+  width: 52px; height: 52px;
+  border-radius: 12px;
   overflow: hidden;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -1106,7 +1114,7 @@ body {
   display: flex; align-items: center; justify-content: center;
   width: 38px; height: 38px;
   border-radius: 10px;
-  background: rgba(255,255,255,.1);
+  background: transparent;
 }
 .sidebar-collapsed-chat svg {
   width: 22px; height: 22px;
