@@ -83,7 +83,7 @@ function setupGoogleButton() {
       locale: 'en',
       shape: 'rectangular',
       logo_alignment: 'left',
-      width: 360,
+      width: Math.min(360, window.innerWidth - 64),
     }
   );
 }
