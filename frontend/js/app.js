@@ -137,7 +137,20 @@ async function handleLoadSession(sessionId) {
   const { session, messages, analysis } = data;
 
   if (analysis) {
-    // Show analysis screen for completed sessions
+    // Show analysis screen for completed sessions.
+    // The Supabase row uses snake_case; renderAnalysis expects camelCase — normalize it.
+    const normalizedAnalysis = {
+      overallScore:    analysis.overall_score,
+      readinessLevel:  analysis.readiness_level,
+      summary:         analysis.summary,
+      topTip:          analysis.top_tip,
+      emotionAnalysis: analysis.emotion_analysis,
+      answerStrength:  analysis.answer_strength,
+      strengths:       analysis.strengths,
+      improvements:    analysis.improvements,
+      questionFeedback: analysis.question_feedback,
+    };
+
     InterviewState.setConfig({
       type: session.interview_type,
       jobTitle: session.job_title,
@@ -152,7 +165,7 @@ async function handleLoadSession(sessionId) {
     if (content) content.style.display = 'block';
 
     renderAnalysis(
-      { analysis },
+      { analysis: normalizedAnalysis },
       { totalExchanges: messages.filter(m => m.role === 'user').length, jobTitle: session.job_title, interviewType: session.interview_type }
     );
     triggerAnalysisAnimations();
