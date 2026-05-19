@@ -461,18 +461,19 @@ body {
 /* Voice bar */
 .voice-bar {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 10px;
-  padding: 14px 20px;
+  gap: 12px;
+  padding: 8px 16px;
   background: var(--surface);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  min-height: 56px;
 }
 
-.voice-wave { display: flex; gap: 4px; align-items: center; height: 28px; }
+.voice-wave { display: flex; gap: 3px; align-items: center; height: 20px; }
 .voice-wave span {
-  width: 4px; height: 6px;
+  width: 3px; height: 5px;
   background: var(--accent);
   border-radius: 2px;
 }
@@ -483,18 +484,19 @@ body {
 .voice-wave.active span:nth-child(4) { animation-delay: .1s; }
 .voice-wave.active span:nth-child(5) { animation-delay: 0s; }
 @keyframes vwave {
-  0%,100% { height: 6px; } 50% { height: 24px; }
+  0%,100% { height: 5px; } 50% { height: 18px; }
 }
 
 .voice-btn {
-  width: 80px; height: 80px;
+  width: 44px; height: 44px;
   border-radius: 50%;
-  border: 2.5px solid var(--border);
+  border: 2px solid var(--border);
   background: var(--surface2);
-  font-size: 2rem;
+  font-size: 1.2rem;
   cursor: pointer;
   transition: all .25s ease;
   display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
 }
 .voice-btn--idle:hover { border-color: var(--accent); background: var(--accent-light); transform: scale(1.05); }
 .voice-btn--listening {
@@ -511,20 +513,27 @@ body {
   border-color: var(--amber);
   background: #FFFBEB;
 }
-@keyframes vbpulse  { 0%,100%{box-shadow:0 0 0 0 rgba(244,63,94,.3)}  50%{box-shadow:0 0 0 14px rgba(244,63,94,0)} }
-@keyframes vbpulse2 { 0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.3)} 50%{box-shadow:0 0 0 14px rgba(34,197,94,0)} }
+@keyframes vbpulse  { 0%,100%{box-shadow:0 0 0 0 rgba(244,63,94,.3)}  50%{box-shadow:0 0 0 10px rgba(244,63,94,0)} }
+@keyframes vbpulse2 { 0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.3)} 50%{box-shadow:0 0 0 10px rgba(34,197,94,0)} }
 
-.voice-status  { font-size: 1rem; color: var(--text3); font-weight: 500; }
-.voice-interim { font-size: 1rem; color: var(--text2); font-style: italic; text-align: center; max-width: 340px; }
+/* Center group: status + feedback stacked */
+.voice-bar > .voice-status,
+.voice-bar > .voice-feedback {
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-status  { font-size: .85rem; color: var(--text3); font-weight: 500; white-space: nowrap; }
+.voice-interim { font-size: .85rem; color: var(--text2); font-style: italic; text-align: center; max-width: 340px; }
 .voice-caption-text { font-style: italic; }
 
 /* Live audio waveform meter */
 /* Fixed-height wrapper so meter↔text swap never shifts the voice bar height */
 .voice-feedback {
-  height: 36px;
+  height: 28px;
   position: relative;
   width: 100%;
-  max-width: 340px;
+  max-width: 280px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -535,7 +544,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: .95rem;
+  font-size: .85rem;
   color: var(--text2);
   font-style: italic;
   text-align: center;
@@ -561,8 +570,8 @@ body {
 
 .vm-bar {
   display: inline-block;
-  width: 4px;
-  height: 28px;
+  width: 3px;
+  height: 22px;
   border-radius: 2px;
   background: var(--accent);
   opacity: 0.85;
@@ -575,23 +584,25 @@ body {
 .voice-submit-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 24px;
+  gap: 5px;
+  padding: 7px 16px;
   background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 999px;
-  font-size: .92rem;
+  font-size: .82rem;
   font-weight: 600;
   cursor: pointer;
   transition: background .2s, transform .15s, opacity .2s;
   box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .voice-submit-btn:hover  { background: var(--accent-hover, var(--accent)); filter: brightness(1.1); transform: scale(1.03); }
 .voice-submit-btn:active { transform: scale(.97); }
 
 .voice-btn-icon {
-  width: 30px; height: 30px;
+  width: 20px; height: 20px;
   color: var(--text);
   transition: color var(--t);
 }
@@ -1010,7 +1021,7 @@ body {
   .btn-end { padding: 8px 16px; font-size: .85rem; }
 
   /* Voice button bigger */
-  .voice-btn { width: 76px; height: 76px; }
+  .voice-btn { width: 40px; height: 40px; }
 
   /* Analysis screen */
   .analysis-header { flex-direction: column; gap: 14px; align-items: flex-start; }
@@ -1041,7 +1052,7 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 48px;
+  padding: clamp(32px, 5vw, 64px) clamp(28px, 4vw, 52px);
   position: relative;
   overflow: hidden;
 }
@@ -1137,17 +1148,17 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
+  padding: clamp(24px, 5vw, 64px) clamp(20px, 4vw, 48px);
 }
 
 .login-form-wrap {
   width: 100%;
-  max-width: 400px;
+  max-width: min(400px, 90vw);
 }
 
 .login-title {
   font-family: var(--font-serif);
-  font-size: 2rem;
+  font-size: clamp(1.5rem, 3vw, 2rem);
   color: #111827;
   margin-bottom: 6px;
 }
@@ -1181,12 +1192,14 @@ body {
   margin-bottom: 20px;
   display: flex;
   justify-content: center;
+  width: 100%;
 }
 
 /* Override Google button to fill width */
 .google-btn-wrap > div,
 .google-btn-wrap iframe {
   width: 100% !important;
+  max-width: 400px !important;
 }
 
 .login-note {
@@ -1542,7 +1555,7 @@ body {
   }
   .login-form-wrap {
     max-width: 100%;
-    padding: 48px 28px 52px;   /* more breathing room */
+    padding: clamp(36px, 8vw, 52px) clamp(20px, 6vw, 32px) clamp(36px, 8vw, 52px);
     display: flex;
     flex-direction: column;
     min-height: 100vh;

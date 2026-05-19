@@ -50,6 +50,7 @@ export async function renderSidebar(onSelectSession, onNewChat) {
 
     sidebar.addEventListener('click', (e) => {
       if (!sidebar.classList.contains('sidebar--open')) {
+        // Only open when clicking the collapsed icon strip, not buried session items
         sidebar.classList.add('sidebar--open');
         e.stopPropagation();
       }
@@ -168,9 +169,11 @@ function renderSessionList(sessions, onSelect) {
 
   // Bind clicks and menus
   container.querySelectorAll('.sidebar-session-item').forEach(el => {
-    // Click on item (not on the 3-dot btn) → load session
+    // Click on item (not on the 3-dot btn) → load session ONLY when sidebar is open
     el.addEventListener('click', (e) => {
       if (e.target.closest('.session-menu-btn') || e.target.closest('.session-dropdown')) return;
+      const sidebar = document.getElementById('sidebar');
+      if (!sidebar || !sidebar.classList.contains('sidebar--open')) return; // ignore taps when collapsed
       onSelect(el.dataset.id);
     });
 
