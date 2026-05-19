@@ -37,22 +37,33 @@
 
   <div class="login-right">
     <div class="login-form-wrap">
-      <h2 class="login-title">Welcome back</h2>
-      <p class="login-desc">Sign in to your BUSimInt account</p>
-
-      <div id="login-spinner" class="login-spinner" style="display:none"></div>
-      <div id="login-error" class="login-error" style="display:none"></div>
-
-      <div id="google-btn-container" class="google-btn-wrap"></div>
-
-      <div class="login-note">
-        Sign in with the Google account you use for your enrolled classes. No password required.
+      <!-- Mobile-only brand header (hidden on desktop via CSS) -->
+      <div class="login-mobile-header">
+        <div class="login-mobile-logo">
+          <img src="./BUSimInt_Logo.png" alt="BUSimInt Logo">
+        </div>
+        <span class="login-mobile-brand-name">BUSimInt</span>
+        <span class="login-mobile-tagline">AI Interview Simulator</span>
       </div>
+      <!-- Card body (white area) -->
+      <div class="login-mobile-card">
+        <h2 class="login-title">Welcome back</h2>
+        <p class="login-desc">Sign in to your BUSimInt account</p>
 
-      <div class="login-links">
-        <a href="./privacy.html" target="_blank">Privacy Policy</a>
-        <span>·</span>
-        <a href="./terms.html" target="_blank">Terms of Service</a>
+        <div id="login-spinner" class="login-spinner" style="display:none"></div>
+        <div id="login-error" class="login-error" style="display:none"></div>
+
+        <div id="google-btn-container" class="google-btn-wrap"></div>
+
+        <div class="login-note">
+          Sign in with the Google account you use for your enrolled classes. No password required.
+        </div>
+
+        <div class="login-links">
+          <a href="./privacy.html" target="_blank">Privacy Policy</a>
+          <span>·</span>
+          <a href="./terms.html" target="_blank">Terms of Service</a>
+        </div>
       </div>
     </div>
   </div>
