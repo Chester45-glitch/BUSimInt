@@ -13,6 +13,14 @@ services:
         value: 10000
       - key: GROQ_API_KEY
         sync: false  # Set this in Render dashboard
+      - key: GEMINI_API_KEY_1
+        sync: false  # Primary Gemini key — set in Render dashboard
+      - key: GEMINI_API_KEY_2
+        sync: false  # Second Gemini key — optional, for rotation
+      - key: GEMINI_API_KEY_3
+        sync: false  # Third Gemini key — optional, for rotation
+      - key: GEMINI_API_KEY_4
+        sync: false  # Fourth Gemini key — optional, for rotation
       - key: GOOGLE_TTS_API_KEY
         sync: false  # Optional — set in Render dashboard
       - key: FRONTEND_URL
