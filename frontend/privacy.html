@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy — BUSimInt</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+  <link rel="icon" href="./BUSimInt_Logo.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --accent: #1A5FD4;
+      --text: #111827;
+      --text2: #374151;
+      --text3: #6B7280;
+      --border: #E5E7EB;
+      --bg: #F9FAFB;
+      --surface: #FFFFFF;
+    }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text2);
+      line-height: 1.7;
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+    }
+    header {
+      background: #0A1628;
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header img { width: 32px; height: 32px; border-radius: 8px; }
+    header a {
+      color: #fff;
+      font-weight: 700;
+      font-size: 1.05rem;
+      text-decoration: none;
+      letter-spacing: -.01em;
+    }
+    header span { color: rgba(255,255,255,.35); margin: 0 6px; }
+    header .page-label { color: rgba(255,255,255,.6); font-size: .9rem; font-weight: 400; }
+
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: -.02em;
+    }
+    .meta {
+      font-size: .85rem;
+      color: var(--text3);
+      margin-bottom: 40px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text);
+      margin: 36px 0 12px;
+      letter-spacing: -.01em;
+    }
+    p { margin-bottom: 14px; color: var(--text2); }
+    ul { padding-left: 20px; margin-bottom: 14px; }
+    li { margin-bottom: 8px; color: var(--text2); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .callout {
+      background: #EEF4FF;
+      border: 1px solid #BDD5FF;
+      border-radius: 10px;
+      padding: 16px 18px;
+      font-size: .9rem;
+      color: #1A4A8A;
+      margin-bottom: 28px;
+    }
+    footer {
+      text-align: center;
+      padding: 32px 24px;
+      border-top: 1px solid var(--border);
+      font-size: .8rem;
+      color: var(--text3);
+    }
+    @media (max-width: 600px) {
+      h1 { font-size: 1.5rem; }
+      .container { padding: 32px 18px 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <img src="./BUSimInt_Logo.png" alt="BUSimInt">
+  <a href="./index.html">BUSimInt</a>
+  <span>/</span>
+  <span class="page-label">Privacy Policy</span>
+</header>
+
+<div class="container">
+  <h1>Privacy Policy</h1>
+  <p class="meta">Last updated: May 19, 2026 &nbsp;·&nbsp; Bicol University Polangui Academic Platform</p>
+
+  <div class="callout">
+    This platform is an academic tool developed for Bicol University Polangui students. We are committed to protecting your privacy and handling your data responsibly.
+  </div>
+
+  <h2>1. Who We Are</h2>
+  <p>BUSimInt (Bicol University Simulation Interview) is an AI-powered interview practice platform developed as an academic project at Bicol University Polangui. It is not a commercial service.</p>
+
+  <h2>2. Information We Collect</h2>
+  <p>When you use BUSimInt, we may collect the following types of information:</p>
+  <ul>
+    <li><strong>Google Account Information:</strong> Your name, email address, and profile picture, collected via Google Sign-In (OAuth 2.0).</li>
+    <li><strong>Interview Transcripts:</strong> Text from your simulated interview sessions, including both AI interviewer questions and your typed or spoken responses.</li>
+    <li><strong>Audio Data:</strong> If you use Voice Mode, your audio is sent to our backend for transcription (via Groq Whisper). Audio is not stored — only the resulting text transcript is retained.</li>
+    <li><strong>Session Metadata:</strong> Interview type, job title, experience level, timestamps, and performance scores.</li>
+    <li><strong>Usage Data:</strong> Basic logs for debugging and system reliability. No behavioral tracking or advertising data is collected.</li>
+  </ul>
+
+  <h2>3. How We Use Your Information</h2>
+  <ul>
+    <li>To provide and operate the interview simulation service.</li>
+    <li>To generate AI-powered performance analysis and feedback.</li>
+    <li>To store your session history so you can review past interviews.</li>
+    <li>To authenticate you securely using your Google account.</li>
+    <li>To improve the platform for academic purposes (aggregated, anonymized usage only).</li>
+  </ul>
+  <p>We do <strong>not</strong> sell, rent, or share your personal data with third parties for marketing or commercial purposes.</p>
+
+  <h2>4. Third-Party Services</h2>
+  <p>BUSimInt uses the following third-party services to function:</p>
+  <ul>
+    <li><strong>Google Sign-In</strong> — for authentication. Governed by <a href="https://policies.google.com/privacy" target="_blank">Google's Privacy Policy</a>.</li>
+    <li><strong>Supabase</strong> — for database storage of session data. Data is stored on secured servers.</li>
+    <li><strong>Groq (Whisper)</strong> — for audio-to-text transcription in Voice Mode. Audio is processed and discarded; only transcript text is returned.</li>
+    <li><strong>Google Gemini / Groq LLM</strong> — for generating interview questions and performance analysis. Prompts include interview transcripts but not your personal account information.</li>
+  </ul>
+
+  <h2>5. Data Retention</h2>
+  <p>Interview sessions and transcripts are retained in your account until you delete them or your account is removed. You may request deletion of your data at any time by contacting the platform administrator.</p>
+
+  <h2>6. Security</h2>
+  <p>We implement reasonable technical safeguards including HTTPS encryption, secure token-based authentication, and access-controlled database storage. However, no system is completely secure, and we cannot guarantee absolute data security.</p>
+
+  <h2>7. Children's Privacy</h2>
+  <p>BUSimInt is intended for use by Bicol University students (typically 18 years and older). We do not knowingly collect personal information from individuals under 13 years of age.</p>
+
+  <h2>8. Your Rights</h2>
+  <p>You have the right to:</p>
+  <ul>
+    <li>Access the personal data we hold about you.</li>
+    <li>Request correction of inaccurate data.</li>
+    <li>Request deletion of your account and associated data.</li>
+    <li>Withdraw consent for data processing at any time by discontinuing use of the platform.</li>
+  </ul>
+  <p>To exercise these rights, contact the platform administrator through your Bicol University channels.</p>
+
+  <h2>9. Changes to This Policy</h2>
+  <p>We may update this Privacy Policy from time to time. Changes will be reflected with an updated date at the top of this page. Continued use of the platform after changes constitutes acceptance of the revised policy.</p>
+
+  <h2>10. Contact</h2>
+  <p>For questions or concerns about this Privacy Policy, please contact the BUSimInt development team through Bicol University Polangui's academic department.</p>
+</div>
+
+<footer>
+  &copy; 2026 BUSimInt · Bicol University Polangui Academic Platform ·
+  <a href="./terms.html">Terms of Service</a>
+</footer>
+
+</body>
+</html>
