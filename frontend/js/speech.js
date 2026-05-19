@@ -169,9 +169,12 @@ export async function startListening(onTranscript, onEnd, onError) {
 }
 
 // Lightweight audio meter for Web Speech path (no VAD logic — just RMS → UI)
+// Throttled to 80ms intervals; uses EMA smoothing to prevent jitter
 let _wsMeterCtx = null;
+let _wsMeterSmoothed = 0; // exponential moving average
 function _startWebSpeechVADMeter() {
   if (!micStream || !micStream.active) return;
+  _wsMeterSmoothed = 0;
   try {
     _wsMeterCtx = new (window.AudioContext || window.webkitAudioContext)();
     const resume = _wsMeterCtx.state === 'suspended' ? _wsMeterCtx.resume() : Promise.resolve();
@@ -187,10 +190,12 @@ function _startWebSpeechVADMeter() {
         let sum = 0;
         for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
         const rms = Math.sqrt(sum / buf.length) * 100;
-        if (onLiveAudioCb) onLiveAudioCb(rms);
-        requestAnimationFrame(tick);
+        // EMA smoothing: α=0.35 — reduces jitter while staying responsive
+        _wsMeterSmoothed = _wsMeterSmoothed * 0.65 + rms * 0.35;
+        if (onLiveAudioCb) onLiveAudioCb(_wsMeterSmoothed);
+        setTimeout(tick, 80); // throttled — no layout thrash at 60fps
       };
-      requestAnimationFrame(tick);
+      setTimeout(tick, 80);
     });
   } catch (_) {}
 }
@@ -337,8 +342,9 @@ async function _startWhisperListening() {
     const startTime    = Date.now();
     let hasSpeech      = false;
     let speechOnSince  = null;
-    let silenceTimer_  = null; // independent wall-clock silence countdown
+    let silenceTimer_  = null;
     let vadRunning     = true;
+    let _smoothed      = 0; // EMA for live meter
     const VAD_STARTUP_GRACE_MS = 100;
 
     const stopRecording = () => {
@@ -368,8 +374,8 @@ async function _startWhisperListening() {
         sum += v * v;
       }
       const rms = Math.sqrt(sum / buf.length) * 100;
-
-      if (onLiveAudioCb) onLiveAudioCb(rms);
+      _smoothed = _smoothed * 0.65 + rms * 0.35; // EMA smoothing
+      if (onLiveAudioCb) onLiveAudioCb(_smoothed);
 
       const elapsed = Date.now() - startTime;
 
@@ -592,19 +598,15 @@ function _startRecognition(SR) {
 
   rec.onend = () => {
     if (rec !== recognition) return; // stale — ignore
-    // With continuous=true, onend only fires when recognition truly stops.
-    // On mobile (continuous=false), onend fires after each utterance — restart
-    // unless a silence timer is actively running (meaning we're about to auto-submit).
-    if (isListening) {
-      setTimeout(() => {
-        if (isListening && recognition === rec) {
-          // Only skip restart if silence timer is pending AND we have content to submit
-          if (silenceTimer !== null && fullTranscript.trim() !== '') return;
-          recognition = null;
-          _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
-        }
-      }, 200);
-    }
+    if (!isListening) return; // session already finalized (silence timer or stop keyword fired)
+    // Always restart — on mobile (continuous=false) onend fires after every utterance chunk.
+    // We accumulate fullTranscript across restarts; the silence timer finalizes it.
+    recognition = null;
+    setTimeout(() => {
+      if (isListening) {
+        _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+      }
+    }, 150);
   };
 
   try {

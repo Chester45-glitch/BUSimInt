@@ -133,48 +133,42 @@ export function setVoiceState(state) {
 
 export function updateVoiceTranscript(text) {
   const el = document.getElementById('voice-interim-text');
+  const meter = document.getElementById('voice-live-meter');
   if (!el) return;
-  if (text && !text.startsWith('🎙️')) {
-    // Real transcript words — show text, hide meter
-    el.innerHTML = `<span class="voice-caption-text">${text}</span>`;
-    el.style.display = 'block';
-    const meter = document.getElementById('voice-live-meter');
-    if (meter) meter.style.display = 'none';
-  } else if (text) {
-    // Placeholder (🎙️) — clear text, let meter show
-    el.textContent = '';
-    el.style.display = 'none';
+  if (text && !text.startsWith('🎙️') && !text.startsWith('🔄')) {
+    el.textContent = text;
+    el.classList.add('visible');
+    if (meter) meter.classList.remove('visible');
   } else {
     el.textContent = '';
-    el.style.display = 'none';
-    const meter = document.getElementById('voice-live-meter');
-    if (meter) meter.style.display = 'none';
+    el.classList.remove('visible');
   }
 }
 
-// Live audio level meter — shows a bar that pulses with the user's voice
+// Live audio level meter — GPU-composited scaleY, no layout recalculation
 let _meterBars = null;
+let _lastMeterRms = 0;
 export function setLiveMeter(rms) {
-  let meter = document.getElementById('voice-live-meter');
+  const meter = document.getElementById('voice-live-meter');
   if (!meter) return;
 
   const textEl = document.getElementById('voice-interim-text');
-  const hasText = textEl && textEl.querySelector('.voice-caption-text');
-  if (hasText) return; // don't show meter while words are visible
+  if (textEl && textEl.classList.contains('visible')) return; // hide meter while words show
 
+  if (!_meterBars) _meterBars = Array.from(meter.querySelectorAll('.vm-bar'));
+
+  // Show/hide the meter container using class (opacity transition, no layout shift)
   if (rms > 3) {
-    meter.style.display = 'flex';
-    // Map rms (0-100) to bar heights
-    if (!_meterBars) _meterBars = Array.from(meter.querySelectorAll('.vm-bar'));
+    meter.classList.add('visible');
     const n = _meterBars.length;
     _meterBars.forEach((bar, i) => {
-      // Each bar gets a slightly offset amplitude for a wave feel
-      const offset = Math.abs(Math.sin((i / n) * Math.PI));
-      const h = Math.max(4, Math.min(28, (rms / 100) * 28 * offset + 4));
-      bar.style.height = h + 'px';
+      const offset = Math.abs(Math.sin((i / (n - 1)) * Math.PI)) * 0.85 + 0.15;
+      const scale = Math.max(0.1, Math.min(1.0, (rms / 80) * offset));
+      bar.style.transform = `scaleY(${scale.toFixed(3)})`;
     });
   } else {
-    meter.style.display = 'none';
+    meter.classList.remove('visible');
+    _meterBars.forEach(bar => { bar.style.transform = 'scaleY(0.1)'; });
   }
 }
 

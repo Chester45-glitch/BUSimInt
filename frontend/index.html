@@ -157,11 +157,13 @@
               </svg>
             </button>
             <p id="voice-status" class="voice-status">Click to speak</p>
-            <p id="voice-interim-text" class="voice-interim"></p>
-            <div id="voice-live-meter" class="voice-live-meter" style="display:none">
-              <span class="vm-bar"></span><span class="vm-bar"></span><span class="vm-bar"></span>
-              <span class="vm-bar"></span><span class="vm-bar"></span><span class="vm-bar"></span>
-              <span class="vm-bar"></span><span class="vm-bar"></span><span class="vm-bar"></span>
+            <div class="voice-feedback">
+              <p id="voice-interim-text" class="voice-interim"></p>
+              <div id="voice-live-meter" class="voice-live-meter">
+                <span class="vm-bar"></span><span class="vm-bar"></span><span class="vm-bar"></span>
+                <span class="vm-bar"></span><span class="vm-bar"></span><span class="vm-bar"></span>
+                <span class="vm-bar"></span><span class="vm-bar"></span><span class="vm-bar"></span>
+              </div>
             </div>
             <button id="voice-submit-btn" class="voice-submit-btn" style="display:none">
               ✓ Submit Answer
