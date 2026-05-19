@@ -1,4 +1,4 @@
-// services/geminiService.js — Gemini API with key rotation (up to 2 keys)
+// services/geminiService.js — Gemini API with key rotation (up to 4 keys)
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const COOLDOWN_MS = 60 * 1000;
@@ -11,6 +11,8 @@ function buildPool() {
   const raw = [
     process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    process.env.GEMINI_API_KEY_4,
   ];
 
   const pool = raw
@@ -23,7 +25,7 @@ function buildPool() {
     }));
 
   if (pool.length === 0) {
-    throw new Error('No valid GEMINI_API_KEY_1 or GEMINI_API_KEY_2 found in environment.');
+    throw new Error('No valid GEMINI_API_KEY_1..4 found in environment.');
   }
 
   console.log(`[Gemini] Key pool ready with ${pool.length} key(s).`);
