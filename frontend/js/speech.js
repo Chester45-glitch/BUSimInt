@@ -18,7 +18,6 @@ function browserSpeak(text, onStart, onEnd) {
     return;
   }
 
-  // Cancel any pending utterances
   window.speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(text);
@@ -42,7 +41,6 @@ function browserSpeak(text, onStart, onEnd) {
   utterance.onstart = () => { isSpeaking = true;  if (onStart) onStart(); };
   utterance.onend   = () => { isSpeaking = false; if (onEnd)   onEnd();   };
   utterance.onerror = (e) => {
-    // 'interrupted' is normal when we cancel — not a real error
     if (e.error !== 'interrupted' && e.error !== 'canceled') {
       console.warn('[TTS] utterance error:', e.error);
     }
@@ -74,87 +72,88 @@ export function stopSpeaking() {
 
 export function getIsSpeaking() { return isSpeaking; }
 
+// ── Device Detection ─────────────────────────────────────────
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 // ── Speech Recognition ────────────────────────────────────────
 // Strategy:
-// 1. Request mic permission ONCE up front and keep the stream alive.
-// 2. Use short-session recognition (continuous: false) to avoid network timeouts.
-// 3. On persistent network errors (3+ retries): fall back to MediaRecorder → Groq Whisper STT.
-// 4. On 'aborted': silently restart (we triggered it).
+//   MOBILE  → go straight to Whisper (MediaRecorder + backend STT).
+//             Web Speech API on mobile is too unreliable (network errors,
+//             no-speech timeouts, iOS restrictions). Skip it entirely.
+//   DESKTOP → try Web Speech API first; fall back to Whisper after 2
+//             consecutive network errors.
 
-let recognition   = null;
-let silenceTimer  = null;
-let isListening   = false;
+let recognition    = null;
+let silenceTimer   = null;
+let isListening    = false;
 let fullTranscript = '';
 let onTranscriptCb = null;
 let onEndCb        = null;
 let onErrorCb      = null;
 let networkRetries = 0;
-let micStream      = null; // Keep mic stream alive to prevent network errors
-// FIX: Reset useWhisperFallback each session (per startListening call) so mobile
-// Web Speech API gets a fresh chance every time the user presses the mic button.
+let micStream      = null;
 let useWhisperFallback = false;
-const MAX_NETWORK_RETRIES = 2; // Switch to Whisper after 2 failures, not 3
+const MAX_NETWORK_RETRIES = 2;
 
 export function isSpeechRecognitionSupported() {
   return !!(window.SpeechRecognition || window.webkitSpeechRecognition) || !!navigator.mediaDevices;
 }
 
-// Request mic permission first to warm up the audio pipeline.
-// On mobile (especially iOS) streams can go inactive — always verify tracks are live.
+// ── Mic Permission ────────────────────────────────────────────
+// Try with ideal constraints first; fall back to plain { audio: true }
+// because iOS Safari rejects echoCancellation:false and returns an error.
 async function ensureMicPermission() {
-  // Check if existing stream has live tracks
   if (micStream && micStream.active) {
     const tracks = micStream.getAudioTracks();
     if (tracks.length > 0 && tracks[0].readyState === 'live') return true;
   }
-  // Stream is dead or missing — stop stale tracks and get a fresh one
   if (micStream) {
     micStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
     micStream = null;
   }
-  try {
-    // Disable browser-level AGC, noise suppression, and echo cancellation so
-    // the VAD sees the raw mic signal. Mobile browsers apply these by default,
-    // which compresses speech down to near-silence RMS-wise and breaks VAD.
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-      video: false,
-    });
-    console.log('[STT] Microphone permission granted, stream active');
-    return true;
-  } catch (err) {
-    console.error('[STT] Mic permission denied:', err.message);
-    return false;
+
+  // Try ideal constraints (disabling AGC gives VAD a raw signal to work with)
+  const constraintSets = [
+    { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false },
+    { audio: { echoCancellation: true,  noiseSuppression: true,  autoGainControl: true  }, video: false },
+    { audio: true, video: false }, // last resort
+  ];
+
+  for (const constraints of constraintSets) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('[STT] Mic granted with constraints:', JSON.stringify(constraints.audio));
+      return true;
+    } catch (err) {
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        console.error('[STT] Mic permission denied:', err.message);
+        return false; // No point retrying — user denied
+      }
+      console.warn('[STT] Mic constraint set failed, trying next:', err.message);
+    }
   }
+  console.error('[STT] All mic constraint sets failed');
+  return false;
 }
 
+// ── Start Listening ───────────────────────────────────────────
 export async function startListening(onTranscript, onEnd, onError) {
   if (isListening) stopListening();
 
-  // Always reset stale state from a previous completed session,
-  // even when isListening was already false (e.g. after Whisper finished).
+  // Reset all stale state
   whisperActive = false;
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch (_) {}
   }
   mediaRecorder = null;
   if (vadAudioCtx) { try { vadAudioCtx.close(); } catch (_) {} vadAudioCtx = null; }
-
-  // FIX: Reset Whisper fallback flag each session so mobile gets a fresh attempt.
-  // Previously this was module-level persistent, causing mobile to skip Web Speech
-  // API on every press after the first network error.
-  useWhisperFallback = false;
+  useWhisperFallback = false; // Reset each session so desktop gets a fresh attempt
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  // Warm up mic
   const permitted = await ensureMicPermission();
   if (!permitted) {
-    if (onError) onError('Microphone access denied. Please allow microphone in browser settings.');
+    if (onError) onError('Microphone access denied. Please allow microphone in your browser settings.');
     return;
   }
 
@@ -165,29 +164,30 @@ export async function startListening(onTranscript, onEnd, onError) {
   networkRetries = 0;
   isListening    = true;
 
-  if (!SR) {
-    // Web Speech API not available at all — go straight to Whisper.
-    console.log('[STT] Web Speech API unavailable, using Whisper');
+  // MOBILE: always use Whisper — Web Speech API is too unreliable on mobile browsers
+  // DESKTOP with no SR: fall back to Whisper
+  if (isMobile || !SR) {
+    console.log(`[STT] Using Whisper (${isMobile ? 'mobile device' : 'Web Speech API unavailable'})`);
     useWhisperFallback = true;
     if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
+    // Pre-unlock AudioContext on iOS while still inside the gesture chain
     try {
       const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (tmpCtx.state === 'suspended') tmpCtx.resume().catch(() => {});
       tmpCtx.close().catch(() => {});
     } catch (_) {}
     _startWhisperListening();
-  } else {
-    // Probe Web Speech API. Run a parallel AudioContext analyser so we can
-    // push live RMS to the UI even before the first onresult fires.
-    _startWebSpeechVADMeter();
-    setTimeout(() => _startRecognition(SR), 0);
+    return;
   }
+
+  // DESKTOP: try Web Speech API
+  _startWebSpeechVADMeter();
+  setTimeout(() => _startRecognition(SR), 0);
 }
 
-// Lightweight audio meter for Web Speech path (no VAD logic — just RMS → UI)
-// Throttled to 80ms intervals; uses EMA smoothing to prevent jitter
+// ── Web Speech VAD Meter (desktop only) ──────────────────────
 let _wsMeterCtx = null;
-let _wsMeterSmoothed = 0; // exponential moving average
+let _wsMeterSmoothed = 0;
 function _startWebSpeechVADMeter() {
   if (!micStream || !micStream.active) return;
   _wsMeterSmoothed = 0;
@@ -206,10 +206,9 @@ function _startWebSpeechVADMeter() {
         let sum = 0;
         for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
         const rms = Math.sqrt(sum / buf.length) * 100;
-        // EMA smoothing: α=0.35 — reduces jitter while staying responsive
         _wsMeterSmoothed = _wsMeterSmoothed * 0.65 + rms * 0.35;
         if (onLiveAudioCb) onLiveAudioCb(_wsMeterSmoothed);
-        setTimeout(tick, 80); // throttled — no layout thrash at 60fps
+        setTimeout(tick, 80);
       };
       setTimeout(tick, 80);
     });
@@ -220,79 +219,57 @@ function _stopWebSpeechVADMeter() {
   if (onLiveAudioCb) onLiveAudioCb(0);
 }
 
-// ── Whisper fallback via MediaRecorder + Web Audio VAD ───────
-// Records until the user stops speaking (detected via RMS silence),
-// rather than cutting off after a fixed 4-second window.
+// ── Whisper via MediaRecorder + VAD ──────────────────────────
 let mediaRecorder  = null;
 let audioChunks    = [];
 let whisperActive  = false;
-let vadAudioCtx    = null; // Web Audio context for voice activity detection
+let vadAudioCtx    = null;
 
-// VAD tuning constants
-// Mobile mics often apply AGC/noise-suppression at the OS level, compressing
-// the signal so that even loud speech only reads ~8-15 RMS. Thresholds are
-// set conservatively low to accommodate this.
-const VAD_SILENCE_THRESHOLD  = 4;    // RMS below this = true silence
-const VAD_SPEECH_THRESHOLD   = 10;   // RMS above this = confirmed speech (lowered from 22 for mobile AGC)
-const VAD_SPEECH_SUSTAIN_MS  = 80;   // speech must sustain this long to set hasSpeech=true (reduced from 100)
-const VAD_SILENCE_MS         = 1500; // ms of true silence after speech before stopping
-const VAD_MAX_MS             = 60000; // safety cap: 60s
-const VAD_MIN_MS             = 200;  // don't stop before 200ms
-const VAD_POLL_MS            = 80;   // how often to sample the analyser
+// VAD constants — tuned for mobile AGC-compressed signals
+const VAD_SPEECH_THRESHOLD  = 8;    // RMS above this = speech (low to handle AGC compression)
+const VAD_SPEECH_SUSTAIN_MS = 80;   // speech must sustain this long before hasSpeech=true
+const VAD_SILENCE_MS        = 1500; // ms of silence after speech before stopping
+const VAD_MAX_MS            = 60000;
+const VAD_MIN_MS            = 200;
+const VAD_POLL_MS           = 80;
+const VAD_NO_WORDS_MS       = 8000; // stop if no speech confirmed within 8s
 
-// "No words detected" timeout — if no speech is confirmed within this window, stop.
-// Increased to give more time on slow mobile mics to warm up.
-const VAD_NO_WORDS_TIMEOUT_MS = 8000; // stop if no words heard within 8s of start
-
-// Debug: log peak RMS every 2s so we can tune thresholds for the device
-let _vadDebugPeak = 0;
-let _vadDebugTimer = null;
-function _startVadDebug() {
-  _vadDebugPeak = 0;
-  _vadDebugTimer = setInterval(() => {
-    console.log(`[STT VAD] peak RMS in last 2s: ${_vadDebugPeak.toFixed(2)} (speech threshold: ${VAD_SPEECH_THRESHOLD})`);
-    _vadDebugPeak = 0;
-  }, 2000);
-}
-function _stopVadDebug() {
-  clearInterval(_vadDebugTimer);
-  _vadDebugTimer = null;
-}
-
-// Live audio level callback — set by startListening to push RMS to the UI
 let onLiveAudioCb = null;
 export function setLiveAudioCallback(cb) { onLiveAudioCb = cb; }
 
+// VAD debug — logs peak RMS every 2s to help tune thresholds
+let _vadPeak = 0, _vadDebugTimer = null;
+function _startVadDebug() {
+  _vadPeak = 0;
+  _vadDebugTimer = setInterval(() => {
+    console.log(`[STT VAD] peak RMS last 2s: ${_vadPeak.toFixed(2)} (threshold: ${VAD_SPEECH_THRESHOLD})`);
+    _vadPeak = 0;
+  }, 2000);
+}
+function _stopVadDebug() { clearInterval(_vadDebugTimer); _vadDebugTimer = null; }
+
 async function _startWhisperListening() {
   if (!isListening) return;
+
+  // Ensure mic is alive
   if (!micStream || !micStream.active) {
-    ensureMicPermission().then(ok => {
-      if (ok && isListening) _startWhisperListening();
-    });
-    return;
+    const ok = await ensureMicPermission();
+    if (!ok || !isListening) return;
   }
 
   whisperActive = true;
   audioChunks   = [];
-
-  // Close any leftover AudioContext from a previous round
   if (vadAudioCtx) { try { vadAudioCtx.close(); } catch (_) {} vadAudioCtx = null; }
 
-  let mimeType;
+  // Pick best supported MIME type
+  let mimeType = 'audio/webm';
+  for (const t of ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg']) {
+    if (MediaRecorder.isTypeSupported(t)) { mimeType = t; break; }
+  }
+
   try {
-    // Priority order: webm/opus (Chrome/Firefox) → mp4 (iOS Safari) → webm → ogg
-    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-      mimeType = 'audio/webm;codecs=opus';
-    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-      mimeType = 'audio/mp4';
-    } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-      mimeType = 'audio/webm';
-    } else {
-      mimeType = 'audio/ogg';
-    }
     mediaRecorder = new MediaRecorder(micStream, { mimeType });
   } catch (e) {
-    // Last resort: let browser pick its own format
     try {
       mediaRecorder = new MediaRecorder(micStream);
       mimeType = mediaRecorder.mimeType || 'audio/webm';
@@ -307,20 +284,20 @@ async function _startWhisperListening() {
   };
 
   mediaRecorder.onstop = async () => {
-    // Clean up VAD
+    _stopVadDebug();
     if (vadAudioCtx) { try { vadAudioCtx.close(); } catch (_) {} vadAudioCtx = null; }
-
     if (!whisperActive) return;
+
     const blob = new Blob(audioChunks, { type: mimeType });
     audioChunks = [];
 
     if (blob.size < 1500) {
-      // Too short to contain real speech — restart and wait
+      // Too small — no real speech; restart quietly
       if (isListening) setTimeout(() => _startWhisperListening(), 300);
       return;
     }
 
-    if (onTranscriptCb) onTranscriptCb('🔄 Processing...', false);
+    if (onTranscriptCb) onTranscriptCb('🔄 Processing…', false);
 
     try {
       const formData = new FormData();
@@ -336,141 +313,106 @@ async function _startWhisperListening() {
         const data = await res.json();
         const text = (data.text || '').trim();
         if (text) {
-          // Strip stop keyword phrase from the transcript if present
           const cleanText = stripStopKeyword(text);
           fullTranscript = cleanText;
-          isListening   = false;
-          whisperActive = false;
-          mediaRecorder = null;
-          const _onTranscript = onTranscriptCb;
-          const _onEnd        = onEndCb;
-          onTranscriptCb = null;
-          onEndCb        = null;
-          onErrorCb      = null;
-          if (_onTranscript) _onTranscript(cleanText, true);
-          if (_onEnd)        _onEnd(cleanText);
-          return; // Don't restart — we have a complete answer
+          isListening    = false;
+          whisperActive  = false;
+          mediaRecorder  = null;
+          const _cb = onTranscriptCb, _end = onEndCb;
+          onTranscriptCb = null; onEndCb = null; onErrorCb = null;
+          if (_cb)  _cb(cleanText, true);
+          if (_end) _end(cleanText);
+          return;
         }
       }
     } catch (e) {
       console.warn('[STT Whisper] transcription failed:', e.message);
     }
 
-    // No transcript yet — restart and keep listening
+    // No text — restart
     if (isListening) setTimeout(() => _startWhisperListening(), 200);
   };
 
-  // ── Voice Activity Detection ──────────────────────────────
-  // Uses Web Audio AnalyserNode to watch RMS levels in real time.
-  // Stops after:
-  //   (a) genuine silence following real speech, OR
-  //   (b) no recognisable speech words for VAD_NO_WORDS_TIMEOUT_MS —
-  //       prevents hanging forever on background noise.
+  // ── VAD ───────────────────────────────────────────────────
   try {
     vadAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // iOS Safari starts AudioContext suspended — must resume inside a user-gesture chain
     if (vadAudioCtx.state === 'suspended') await vadAudioCtx.resume();
 
-    const source       = vadAudioCtx.createMediaStreamSource(micStream);
-    const analyser     = vadAudioCtx.createAnalyser();
-    analyser.fftSize   = 512;
+    const source   = vadAudioCtx.createMediaStreamSource(micStream);
+    const analyser = vadAudioCtx.createAnalyser();
+    analyser.fftSize = 512;
     source.connect(analyser);
 
-    const buf          = new Uint8Array(analyser.frequencyBinCount);
-    const startTime    = Date.now();
-    let hasSpeech      = false;
-    let speechOnSince  = null;
-    let silenceTimer_  = null;
-    let vadRunning     = true;
-    let _smoothed      = 0; // EMA for live meter
-    const VAD_STARTUP_GRACE_MS = 100;
+    const buf       = new Uint8Array(analyser.frequencyBinCount);
+    const startTime = Date.now();
+    let hasSpeech     = false;
+    let speechOnSince = null;
+    let silenceTimer_ = null;
+    let noWordsTimer_ = null;
+    let vadRunning    = true;
+    let smoothed      = 0;
+
+    _startVadDebug();
 
     const stopRecording = (reason) => {
       if (!vadRunning) return;
       vadRunning = false;
       clearTimeout(silenceTimer_);
       clearTimeout(noWordsTimer_);
-      if (onLiveAudioCb) onLiveAudioCb(0);
+      clearTimeout(maxTimer);
       _stopVadDebug();
+      if (onLiveAudioCb) onLiveAudioCb(0);
       console.log(`[STT Whisper] VAD stop — ${reason}`);
       if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
     };
 
-    // FIX: "No words" safety timer — fires if we never confirmed speech within
-    // VAD_NO_WORDS_TIMEOUT_MS. This prevents the session hanging forever when
-    // background noise keeps RMS above the silence floor but no actual words
-    // are being said. On trigger, we stop the recording; onstop will see
-    // blob.size < 1500 and restart cleanly.
-    let noWordsTimer_ = setTimeout(() => {
-      if (!hasSpeech) {
-        stopRecording('no words detected timeout');
-      }
-    }, VAD_NO_WORDS_TIMEOUT_MS);
+    // No-speech safety: if we never detect confirmed speech within VAD_NO_WORDS_MS, stop.
+    noWordsTimer_ = setTimeout(() => {
+      if (!hasSpeech) stopRecording('no speech confirmed in time limit');
+    }, VAD_NO_WORDS_MS);
 
-    // Safety cap — always fires regardless of VAD state
-    const maxTimer = setTimeout(() => {
-      stopRecording('max duration reached');
-    }, VAD_MAX_MS);
+    const maxTimer = setTimeout(() => stopRecording('max duration'), VAD_MAX_MS);
 
-    _startVadDebug();
     const poll = () => {
-      if (!vadRunning || !whisperActive || !isListening) {
-        clearTimeout(maxTimer);
-        return;
-      }
+      if (!vadRunning || !whisperActive || !isListening) { clearTimeout(maxTimer); return; }
 
       analyser.getByteTimeDomainData(buf);
       let sum = 0;
-      for (let i = 0; i < buf.length; i++) {
-        const v = (buf[i] - 128) / 128;
-        sum += v * v;
-      }
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / buf.length) * 100;
-      if (rms > _vadDebugPeak) _vadDebugPeak = rms; // track peak for debug log
-      _smoothed = _smoothed * 0.65 + rms * 0.35; // EMA smoothing
-      if (onLiveAudioCb) onLiveAudioCb(_smoothed);
+      if (rms > _vadPeak) _vadPeak = rms;
+      smoothed = smoothed * 0.65 + rms * 0.35;
+      if (onLiveAudioCb) onLiveAudioCb(smoothed);
 
       const elapsed = Date.now() - startTime;
-
-      if (elapsed >= VAD_STARTUP_GRACE_MS) {
+      if (elapsed >= 100) { // startup grace
         if (rms >= VAD_SPEECH_THRESHOLD) {
           if (!speechOnSince) speechOnSince = Date.now();
           if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
             hasSpeech = true;
-            // Speech confirmed — cancel the "no words" timeout
-            clearTimeout(noWordsTimer_);
-            noWordsTimer_ = null;
+            clearTimeout(noWordsTimer_); noWordsTimer_ = null;
+            console.log(`[STT VAD] Speech confirmed — RMS: ${rms.toFixed(2)}`);
           }
-          // Voice is loud — cancel any pending silence cutoff
           if (silenceTimer_) { clearTimeout(silenceTimer_); silenceTimer_ = null; }
         } else {
           speechOnSince = null;
-
-          if (hasSpeech && elapsed >= VAD_MIN_MS) {
-            // Below speech threshold — start the silence countdown if not already running
-            if (!silenceTimer_) {
-              silenceTimer_ = setTimeout(() => {
-                clearTimeout(maxTimer);
-                stopRecording('silence timeout after speech');
-              }, VAD_SILENCE_MS);
-            }
+          if (hasSpeech && elapsed >= VAD_MIN_MS && !silenceTimer_) {
+            silenceTimer_ = setTimeout(() => stopRecording('silence after speech'), VAD_SILENCE_MS);
           }
         }
       }
-
       setTimeout(poll, VAD_POLL_MS);
     };
-
     setTimeout(poll, 0);
+
   } catch (vadErr) {
-    // VAD unavailable (very old browser) — fall back to 8-second fixed window
-    console.warn('[STT Whisper] VAD unavailable, using fixed window:', vadErr.message);
+    console.warn('[STT Whisper] VAD unavailable, fixed 8s window:', vadErr.message);
     setTimeout(() => {
       if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
     }, 8000);
   }
 
-  mediaRecorder.start(50); // collect chunks every 50 ms for faster onstop data
+  mediaRecorder.start(50);
 }
 
 // ── Stop Keywords ─────────────────────────────────────────────
@@ -481,126 +423,96 @@ const STOP_PHRASES = [
   "done talking", "done speaking",
   "submit now", "submit answer", "submit that",
   "send it", "send answer", "send that",
-  "finish", "finished",
-  "end answer",
+  "finish", "finished", "end answer",
 ];
 
 function checkStopKeyword(text) {
   const lower = text.toLowerCase().trim();
-  return STOP_PHRASES.some(phrase => lower.endsWith(phrase) || lower === phrase);
+  return STOP_PHRASES.some(p => lower.endsWith(p) || lower === p);
 }
 
 function stripStopKeyword(text) {
   const lower = text.toLowerCase().trim();
-  for (const phrase of STOP_PHRASES) {
-    if (lower.endsWith(phrase)) {
-      return text.slice(0, text.toLowerCase().lastIndexOf(phrase)).trim().replace(/[,.\s]+$/, '').trim();
+  for (const p of STOP_PHRASES) {
+    if (lower.endsWith(p)) {
+      return text.slice(0, text.toLowerCase().lastIndexOf(p)).trim().replace(/[,.\s]+$/, '').trim();
     }
   }
   return text;
 }
 
-// ── Web Speech silence timer — also uses "no words" timeout ──
-// FIX: If the Web Speech API session produces zero interim/final results
-// for WS_NO_WORDS_TIMEOUT_MS after start, finalize immediately so background
-// noise doesn't hold the session open forever.
-const WS_SILENCE_MS        = 1500; // ms of no new words before auto-submit (reduced from 2000)
-const WS_NO_WORDS_TIMEOUT_MS = 5000; // stop if absolutely no words received within 5s
+// ── Web Speech API (desktop only) ────────────────────────────
+const WS_SILENCE_MS     = 1500; // finalize after this many ms of no new words
+const WS_NO_WORDS_MS    = 6000; // give up if zero results in this window
 let _wsNoWordsTimer = null;
+let _recognitionStopping = false;
 
 function _startRecognition(SR) {
   if (!isListening) return;
 
-  // Destroy any prior instance cleanly before creating a new one
   if (recognition) {
     const old = recognition;
     recognition = null;
     _recognitionStopping = true;
-    old.onstart = null;
-    old.onresult = null;
-    old.onerror = null;
-    old.onend = null;
+    old.onstart = null; old.onresult = null; old.onerror = null; old.onend = null;
     try { old.abort(); } catch (_) {}
     _recognitionStopping = false;
   }
 
   let rec;
-  try {
-    rec = new SR();
-  } catch (e) {
-    if (onErrorCb) onErrorCb('Could not initialise microphone: ' + e.message);
-    return;
-  }
+  try { rec = new SR(); }
+  catch (e) { if (onErrorCb) onErrorCb('Could not initialise microphone: ' + e.message); return; }
 
   recognition = rec;
-
-  rec.lang            = Config.SPEECH.LANG;
-  // iOS/Android don't support continuous=true reliably — use continuous=false
-  // and restart the session in onend to simulate continuous capture.
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  rec.continuous      = !isMobile;  // false on mobile, true on desktop
-  rec.interimResults  = true;
+  rec.lang           = Config.SPEECH.LANG;
+  rec.continuous     = true;   // desktop only — continuous works fine on Chrome
+  rec.interimResults = true;
   rec.maxAlternatives = 1;
 
-  // FIX: Start "no words" watchdog. If the recognition session produces no
-  // results at all within WS_NO_WORDS_TIMEOUT_MS, bail out gracefully.
-  // This fires per-session but only finalises if we've truly heard nothing.
+  // No-words watchdog
   clearTimeout(_wsNoWordsTimer);
   _wsNoWordsTimer = setTimeout(() => {
     if (isListening && !fullTranscript.trim()) {
-      // No words at all after timeout — stop cleanly so the user isn't stuck.
-      console.log('[STT] No words detected timeout — stopping session');
+      console.log('[STT] No words detected — switching to Whisper');
+      // Switch to Whisper instead of just giving up
+      useWhisperFallback = true;
       _stopRecognitionClean();
-      const _onEnd = onEndCb;
-      onTranscriptCb = null;
-      onEndCb        = null;
-      onErrorCb      = null;
-      if (_onEnd) _onEnd(''); // empty string signals no speech captured
+      if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
+      _startWhisperListening();
     }
-  }, WS_NO_WORDS_TIMEOUT_MS);
+  }, WS_NO_WORDS_MS);
 
   rec.onstart = () => {
-    console.log('[STT] Recognition started');
-    // Immediate visual feedback so user knows mic is active
+    console.log('[STT] Web Speech started');
     if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
   };
 
   rec.onresult = (event) => {
-    // We got real speech — the connection is healthy, reset the error counter
     networkRetries = 0;
+    clearTimeout(_wsNoWordsTimer); _wsNoWordsTimer = null;
 
-    // Cancel the "no words" watchdog — we have words now
-    clearTimeout(_wsNoWordsTimer);
-    _wsNoWordsTimer = null;
-
-    let interim = '';
-    let final_  = '';
-
+    let interim = '', final_ = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const r = event.results[i];
       if (r.isFinal) final_ += r[0].transcript;
       else           interim += r[0].transcript;
     }
-
     if (final_) fullTranscript += final_ + ' ';
 
     const display = (fullTranscript + interim).trim();
-    // Only show the placeholder if nothing has been heard yet
     if (onTranscriptCb) onTranscriptCb(display || '🎙️ Listening…', false);
 
-    // Check stop keywords against the full current transcript
     const currentText = (fullTranscript + interim).trim();
     if (currentText && checkStopKeyword(currentText)) {
-      const cleanText = stripStopKeyword(currentText);
+      const clean = stripStopKeyword(currentText);
       clearTimeout(silenceTimer); silenceTimer = null;
-      fullTranscript = cleanText;
+      fullTranscript = clean;
       _stopRecognitionClean();
-      if (onTranscriptCb) onTranscriptCb(cleanText, true);
-      if (onEndCb) onEndCb(cleanText);
+      if (onTranscriptCb) onTranscriptCb(clean, true);
+      if (onEndCb) onEndCb(clean);
       return;
     }
 
-    // FIX: Reset silence timer on every speech event (reduced to WS_SILENCE_MS)
     clearTimeout(silenceTimer); silenceTimer = null;
     if (fullTranscript.trim() || interim.trim()) {
       silenceTimer = setTimeout(() => {
@@ -616,38 +528,41 @@ function _startRecognition(SR) {
   };
 
   rec.onerror = (event) => {
-    if (rec !== recognition) return; // stale instance — ignore
+    if (rec !== recognition) return;
     const err = event.error;
-
-    // aborted = we called abort/stop ourselves — never restart from here
     if (err === 'aborted') return;
 
-    // no-speech is normal with continuous mode — do nothing
-    if (err === 'no-speech') return;
+    // no-speech on desktop: reset the no-words timer and keep going
+    if (err === 'no-speech') {
+      console.log('[STT] no-speech event — restarting recognition');
+      recognition = null;
+      rec.onstart = null; rec.onresult = null; rec.onerror = null; rec.onend = null;
+      setTimeout(() => {
+        if (isListening && !useWhisperFallback) {
+          _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+        }
+      }, 200);
+      return;
+    }
 
     console.warn('[STT] error:', err);
 
     if (err === 'network') {
       networkRetries++;
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
-
-      // Null ALL handlers and abort this rec immediately.
-      rec.onstart  = null;
-      rec.onresult = null;
-      rec.onerror  = null;
-      rec.onend    = null;
-      recognition  = null;
+      rec.onstart = null; rec.onresult = null; rec.onerror = null; rec.onend = null;
+      recognition = null;
       try { rec.abort(); } catch (_) {}
 
       if (networkRetries < MAX_NETWORK_RETRIES && isListening) {
         setTimeout(() => {
-          if (!isListening || useWhisperFallback) return; // guard stale timers
+          if (!isListening || useWhisperFallback) return;
           _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
         }, 400 * networkRetries);
         return;
       }
-      // Persistent network failures → switch to Whisper for this session
-      console.log('[STT] Switching to Whisper fallback after persistent network errors');
+      // Persistent network errors → Whisper
+      console.log('[STT] Switching to Whisper after network errors');
       useWhisperFallback = true;
       networkRetries = 0;
       if (isListening) {
@@ -659,14 +574,12 @@ function _startRecognition(SR) {
 
     if (err === 'not-allowed' || err === 'permission-denied') {
       isListening = false;
-      clearTimeout(silenceTimer);
-      clearTimeout(_wsNoWordsTimer);
+      clearTimeout(silenceTimer); clearTimeout(_wsNoWordsTimer);
       recognition = null;
       if (onErrorCb) onErrorCb('Microphone access denied. Please allow microphone access in your browser settings.');
       return;
     }
 
-    // Any other error with continuous mode: try to restart once
     if (isListening) {
       recognition = null;
       setTimeout(() => {
@@ -676,13 +589,12 @@ function _startRecognition(SR) {
   };
 
   rec.onend = () => {
-    if (rec !== recognition) return; // stale — ignore
-    if (!isListening) return; // session already finalized (silence timer or stop keyword fired)
-    // Always restart — on mobile (continuous=false) onend fires after every utterance chunk.
-    // We accumulate fullTranscript across restarts; the silence timer finalizes it.
+    if (rec !== recognition) return;
+    if (!isListening) return;
+    // continuous=true on desktop means onend only fires on error/abort — restart
     recognition = null;
     setTimeout(() => {
-      if (isListening) {
+      if (isListening && !useWhisperFallback) {
         _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
       }
     }, 150);
@@ -694,91 +606,63 @@ function _startRecognition(SR) {
     console.error('[STT] start() failed:', err);
     recognition = null;
     if (err.name === 'InvalidStateError') {
-      setTimeout(() => {
-        if (isListening) _startRecognition(SR);
-      }, 500);
+      setTimeout(() => { if (isListening) _startRecognition(SR); }, 500);
     } else {
       if (onErrorCb) onErrorCb('Could not start microphone: ' + err.message);
     }
   }
 }
 
-// Cleanly stop the active recognition without triggering a restart
-let _recognitionStopping = false;
 function _stopRecognitionClean() {
   isListening = false;
   clearTimeout(silenceTimer); silenceTimer = null;
   clearTimeout(_wsNoWordsTimer); _wsNoWordsTimer = null;
   _stopWebSpeechVADMeter();
   if (recognition) {
-    const r = recognition;
-    recognition = null;
-    r.onstart = null;
-    r.onresult = null;
-    r.onerror = null;
-    r.onend = null;
+    const r = recognition; recognition = null;
+    r.onstart = null; r.onresult = null; r.onerror = null; r.onend = null;
     try { r.abort(); } catch (_) {}
   }
 }
 
 export function stopListening() {
-  isListening = false;
-  whisperActive = false;
-  clearTimeout(silenceTimer); silenceTimer = null;
+  isListening    = false;
+  whisperActive  = false;
+  clearTimeout(silenceTimer);    silenceTimer    = null;
   clearTimeout(_wsNoWordsTimer); _wsNoWordsTimer = null;
   _stopWebSpeechVADMeter();
-  onTranscriptCb = null;
-  onEndCb        = null;
-  onErrorCb      = null;
-  onLiveAudioCb  = null;
+  _stopVadDebug();
+  onTranscriptCb = null; onEndCb = null; onErrorCb = null; onLiveAudioCb = null;
   fullTranscript = '';
 
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch (_) {}
     mediaRecorder = null;
   }
-
   if (recognition) {
-    const r = recognition;
-    recognition = null;
-    r.onstart = null;
-    r.onresult = null;
-    r.onerror = null;
-    r.onend = null;
+    const r = recognition; recognition = null;
+    r.onstart = null; r.onresult = null; r.onerror = null; r.onend = null;
     try { r.abort(); } catch (_) {}
   }
 }
 
 export function getIsListening() { return isListening; }
-
-// Returns whatever has been captured so far (for the Submit button)
 export function getPartialTranscript() { return fullTranscript.trim(); }
 
-// Immediately finalise the current recording and fire onEnd with what we have.
-// Called by the Submit Answer button.
 export function submitNow() {
   if (!isListening) return;
 
-  // Web Speech API path — we have fullTranscript already
   if (recognition) {
     const text = fullTranscript.trim();
     _stopRecognitionClean();
-    const _onTranscript = onTranscriptCb;
-    const _onEnd        = onEndCb;
-    onTranscriptCb = null;
-    onEndCb        = null;
-    onErrorCb      = null;
-    if (text) {
-      if (_onTranscript) _onTranscript(text, true);
-      if (_onEnd)        _onEnd(text);
-    }
+    const _cb = onTranscriptCb, _end = onEndCb;
+    onTranscriptCb = null; onEndCb = null; onErrorCb = null;
+    if (text) { if (_cb) _cb(text, true); if (_end) _end(text); }
     return;
   }
 
-  // Whisper path — stop the recorder; onstop will handle transcription
   if (mediaRecorder && mediaRecorder.state === 'recording') {
-    whisperActive = true; // keep onstop handler alive
+    whisperActive = true;
     mediaRecorder.stop();
-    // onstop will call onTranscriptCb / onEndCb as usual
   }
 }
