@@ -66,13 +66,15 @@ export async function renderSidebar(onSelectSession, onNewChat) {
   sidebar.innerHTML = `
     <!-- Collapsed strip: logo top, chat icon middle, avatar bottom -->
     <div class="sidebar-collapsed-strip">
-      <div class="sidebar-collapsed-logo">
-        <img src="./BUSimInt_Logo.png" alt="BUSimInt">
-      </div>
-      <div class="sidebar-collapsed-chat">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-        </svg>
+      <div class="sidebar-collapsed-top">
+        <div class="sidebar-collapsed-logo">
+          <img src="./BUSimInt_Logo.png" alt="BUSimInt">
+        </div>
+        <div class="sidebar-collapsed-chat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+          </svg>
+        </div>
       </div>
       <div class="sidebar-collapsed-avatar">
         ${user.avatarUrl
