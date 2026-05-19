@@ -501,6 +501,26 @@ body {
 
 .voice-status  { font-size: .92rem; color: var(--text3); font-weight: 500; }
 .voice-interim { font-size: .92rem; color: var(--text2); font-style: italic; text-align: center; max-width: 340px; }
+.voice-caption-text { font-style: italic; }
+
+/* Live audio waveform meter */
+.voice-live-meter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 32px;
+  margin-top: 2px;
+}
+.vm-bar {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: height 60ms ease-out;
+  opacity: 0.85;
+}
 
 .voice-submit-btn {
   display: inline-flex;
