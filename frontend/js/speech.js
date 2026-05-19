@@ -113,7 +113,17 @@ async function ensureMicPermission() {
     micStream = null;
   }
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    // Disable browser-level AGC, noise suppression, and echo cancellation so
+    // the VAD sees the raw mic signal. Mobile browsers apply these by default,
+    // which compresses speech down to near-silence RMS-wise and breaks VAD.
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+      video: false,
+    });
     console.log('[STT] Microphone permission granted, stream active');
     return true;
   } catch (err) {
@@ -219,19 +229,35 @@ let whisperActive  = false;
 let vadAudioCtx    = null; // Web Audio context for voice activity detection
 
 // VAD tuning constants
-// VAD_SPEECH_THRESHOLD must be well above ambient mic hiss (~5-8 RMS).
-// 12 was too low — room noise alone set hasSpeech=true before any speech.
-const VAD_SILENCE_THRESHOLD  = 8;    // RMS below this = true silence (below typical room noise)
-const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = confirmed speech
-const VAD_SPEECH_SUSTAIN_MS  = 100;  // speech must sustain this long to set hasSpeech=true
-const VAD_SILENCE_MS         = 1500; // ms of true silence after speech before stopping (reduced from 2000)
+// Mobile mics often apply AGC/noise-suppression at the OS level, compressing
+// the signal so that even loud speech only reads ~8-15 RMS. Thresholds are
+// set conservatively low to accommodate this.
+const VAD_SILENCE_THRESHOLD  = 4;    // RMS below this = true silence
+const VAD_SPEECH_THRESHOLD   = 10;   // RMS above this = confirmed speech (lowered from 22 for mobile AGC)
+const VAD_SPEECH_SUSTAIN_MS  = 80;   // speech must sustain this long to set hasSpeech=true (reduced from 100)
+const VAD_SILENCE_MS         = 1500; // ms of true silence after speech before stopping
 const VAD_MAX_MS             = 60000; // safety cap: 60s
 const VAD_MIN_MS             = 200;  // don't stop before 200ms
 const VAD_POLL_MS            = 80;   // how often to sample the analyser
 
-// FIX: "No words detected" timeout — if no recognisable speech has been
-// captured for this many ms after startup, stop and avoid hanging on background noise.
-const VAD_NO_WORDS_TIMEOUT_MS = 5000; // stop if no words heard within 5s of start
+// "No words detected" timeout — if no speech is confirmed within this window, stop.
+// Increased to give more time on slow mobile mics to warm up.
+const VAD_NO_WORDS_TIMEOUT_MS = 8000; // stop if no words heard within 8s of start
+
+// Debug: log peak RMS every 2s so we can tune thresholds for the device
+let _vadDebugPeak = 0;
+let _vadDebugTimer = null;
+function _startVadDebug() {
+  _vadDebugPeak = 0;
+  _vadDebugTimer = setInterval(() => {
+    console.log(`[STT VAD] peak RMS in last 2s: ${_vadDebugPeak.toFixed(2)} (speech threshold: ${VAD_SPEECH_THRESHOLD})`);
+    _vadDebugPeak = 0;
+  }, 2000);
+}
+function _stopVadDebug() {
+  clearInterval(_vadDebugTimer);
+  _vadDebugTimer = null;
+}
 
 // Live audio level callback — set by startListening to push RMS to the UI
 let onLiveAudioCb = null;
@@ -365,6 +391,7 @@ async function _startWhisperListening() {
       clearTimeout(silenceTimer_);
       clearTimeout(noWordsTimer_);
       if (onLiveAudioCb) onLiveAudioCb(0);
+      _stopVadDebug();
       console.log(`[STT Whisper] VAD stop — ${reason}`);
       if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
     };
@@ -385,6 +412,7 @@ async function _startWhisperListening() {
       stopRecording('max duration reached');
     }, VAD_MAX_MS);
 
+    _startVadDebug();
     const poll = () => {
       if (!vadRunning || !whisperActive || !isListening) {
         clearTimeout(maxTimer);
@@ -398,6 +426,7 @@ async function _startWhisperListening() {
         sum += v * v;
       }
       const rms = Math.sqrt(sum / buf.length) * 100;
+      if (rms > _vadDebugPeak) _vadDebugPeak = rms; // track peak for debug log
       _smoothed = _smoothed * 0.65 + rms * 0.35; // EMA smoothing
       if (onLiveAudioCb) onLiveAudioCb(_smoothed);
 
