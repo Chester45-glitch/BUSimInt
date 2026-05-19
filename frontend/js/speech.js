@@ -225,14 +225,22 @@ let audioChunks    = [];
 let whisperActive  = false;
 let vadAudioCtx    = null;
 
-// VAD constants — tuned for mobile AGC-compressed signals
-const VAD_SPEECH_THRESHOLD  = 8;    // RMS above this = speech (low to handle AGC compression)
-const VAD_SPEECH_SUSTAIN_MS = 80;   // speech must sustain this long before hasSpeech=true
-const VAD_SILENCE_MS        = 1500; // ms of silence after speech before stopping
-const VAD_MAX_MS            = 60000;
-const VAD_MIN_MS            = 200;
-const VAD_POLL_MS           = 80;
-const VAD_NO_WORDS_MS       = 8000; // stop if no speech confirmed within 8s
+// VAD constants
+// VAD_SPEECH_THRESHOLD is now a MINIMUM floor — the actual threshold is
+// computed adaptively from the ambient noise baseline during the first
+// calibration window. This handles devices where AGC makes speech very
+// quiet AND devices where background noise is loud.
+const VAD_SPEECH_THRESHOLD_MIN = 5;   // absolute floor (very quiet mics)
+const VAD_SPEECH_THRESHOLD_MAX = 40;  // absolute ceiling
+const VAD_CALIBRATION_MS    = 1000;  // measure ambient noise for this long before VAD activates
+const VAD_SPEECH_MULTIPLIER = 2.8;   // speech threshold = baseline * this multiplier
+const VAD_SPEECH_SUSTAIN_MS = 120;   // speech must sustain this long before hasSpeech=true
+const VAD_SILENCE_MS        = 2500;  // ms of silence after speech before stopping
+                                      // Increased from 1500 — natural thinking pauses can be 1-2s
+const VAD_MAX_MS            = 90000; // safety cap
+const VAD_MIN_MS            = 300;
+const VAD_POLL_MS           = 60;    // poll faster for responsiveness
+const VAD_NO_WORDS_MS       = 10000; // stop if no speech confirmed within 10s
 
 let onLiveAudioCb = null;
 export function setLiveAudioCallback(cb) { onLiveAudioCb = cb; }
@@ -242,7 +250,7 @@ let _vadPeak = 0, _vadDebugTimer = null;
 function _startVadDebug() {
   _vadPeak = 0;
   _vadDebugTimer = setInterval(() => {
-    console.log(`[STT VAD] peak RMS last 2s: ${_vadPeak.toFixed(2)} (threshold: ${VAD_SPEECH_THRESHOLD})`);
+    console.log(`[STT VAD] peak RMS last 2s: ${_vadPeak.toFixed(2)}`);
     _vadPeak = 0;
   }, 2000);
 }
@@ -352,6 +360,15 @@ async function _startWhisperListening() {
     let vadRunning    = true;
     let smoothed      = 0;
 
+    // Adaptive calibration state
+    // During VAD_CALIBRATION_MS we sample ambient noise and compute a dynamic
+    // speech threshold = baseline * VAD_SPEECH_MULTIPLIER.
+    // This makes detection work regardless of the device's mic sensitivity or
+    // ambient noise level — quiet mics, loud rooms, AGC-compressed signals, all handled.
+    let calibrating      = true;
+    let calibSamples     = [];
+    let speechThreshold  = VAD_SPEECH_THRESHOLD_MIN; // updated after calibration
+
     _startVadDebug();
 
     const stopRecording = (reason) => {
@@ -366,10 +383,12 @@ async function _startWhisperListening() {
       if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
     };
 
-    // No-speech safety: if we never detect confirmed speech within VAD_NO_WORDS_MS, stop.
-    noWordsTimer_ = setTimeout(() => {
-      if (!hasSpeech) stopRecording('no speech confirmed in time limit');
-    }, VAD_NO_WORDS_MS);
+    // No-speech safety timer — starts AFTER calibration finishes
+    const startNoWordsTimer = () => {
+      noWordsTimer_ = setTimeout(() => {
+        if (!hasSpeech) stopRecording('no speech confirmed in time limit');
+      }, VAD_NO_WORDS_MS);
+    };
 
     const maxTimer = setTimeout(() => stopRecording('max duration'), VAD_MAX_MS);
 
@@ -385,22 +404,44 @@ async function _startWhisperListening() {
       if (onLiveAudioCb) onLiveAudioCb(smoothed);
 
       const elapsed = Date.now() - startTime;
-      if (elapsed >= 100) { // startup grace
-        if (rms >= VAD_SPEECH_THRESHOLD) {
-          if (!speechOnSince) speechOnSince = Date.now();
-          if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
-            hasSpeech = true;
-            clearTimeout(noWordsTimer_); noWordsTimer_ = null;
-            console.log(`[STT VAD] Speech confirmed — RMS: ${rms.toFixed(2)}`);
-          }
-          if (silenceTimer_) { clearTimeout(silenceTimer_); silenceTimer_ = null; }
-        } else {
-          speechOnSince = null;
-          if (hasSpeech && elapsed >= VAD_MIN_MS && !silenceTimer_) {
-            silenceTimer_ = setTimeout(() => stopRecording('silence after speech'), VAD_SILENCE_MS);
-          }
+
+      // ── Phase 1: Calibration ──────────────────────────────
+      if (calibrating) {
+        calibSamples.push(rms);
+        if (elapsed >= VAD_CALIBRATION_MS) {
+          calibrating = false;
+          // Use the 80th-percentile sample as baseline (more robust than mean —
+          // ignores occasional loud spikes during calibration)
+          const sorted = [...calibSamples].sort((a, b) => a - b);
+          const baseline = sorted[Math.floor(sorted.length * 0.8)] || 4;
+          speechThreshold = Math.min(
+            VAD_SPEECH_THRESHOLD_MAX,
+            Math.max(VAD_SPEECH_THRESHOLD_MIN, baseline * VAD_SPEECH_MULTIPLIER)
+          );
+          console.log(`[STT VAD] Calibrated — baseline: ${baseline.toFixed(2)}, speech threshold: ${speechThreshold.toFixed(2)}`);
+          startNoWordsTimer();
+        }
+        setTimeout(poll, VAD_POLL_MS);
+        return;
+      }
+
+      // ── Phase 2: Active VAD ───────────────────────────────
+      if (rms >= speechThreshold) {
+        if (!speechOnSince) speechOnSince = Date.now();
+        if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
+          hasSpeech = true;
+          clearTimeout(noWordsTimer_); noWordsTimer_ = null;
+          console.log(`[STT VAD] Speech confirmed — RMS: ${rms.toFixed(2)}, threshold was: ${speechThreshold.toFixed(2)}`);
+        }
+        // Voice active — cancel any pending silence cutoff
+        if (silenceTimer_) { clearTimeout(silenceTimer_); silenceTimer_ = null; }
+      } else {
+        speechOnSince = null;
+        if (hasSpeech && elapsed >= VAD_MIN_MS && !silenceTimer_) {
+          silenceTimer_ = setTimeout(() => stopRecording('silence after speech'), VAD_SILENCE_MS);
         }
       }
+
       setTimeout(poll, VAD_POLL_MS);
     };
     setTimeout(poll, 0);
@@ -442,8 +483,8 @@ function stripStopKeyword(text) {
 }
 
 // ── Web Speech API (desktop only) ────────────────────────────
-const WS_SILENCE_MS     = 1500; // finalize after this many ms of no new words
-const WS_NO_WORDS_MS    = 6000; // give up if zero results in this window
+const WS_SILENCE_MS     = 2500; // finalize after this many ms of no new words (matches VAD_SILENCE_MS)
+const WS_NO_WORDS_MS    = 10000; // give up if zero results in this window
 let _wsNoWordsTimer = null;
 let _recognitionStopping = false;
 
