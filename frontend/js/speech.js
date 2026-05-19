@@ -90,7 +90,9 @@ let onEndCb        = null;
 let onErrorCb      = null;
 let networkRetries = 0;
 let micStream      = null; // Keep mic stream alive to prevent network errors
-let useWhisperFallback = false; // Once set true after persistent network errors, stays true for the session
+// FIX: Reset useWhisperFallback each session (per startListening call) so mobile
+// Web Speech API gets a fresh chance every time the user presses the mic button.
+let useWhisperFallback = false;
 const MAX_NETWORK_RETRIES = 2; // Switch to Whisper after 2 failures, not 3
 
 export function isSpeechRecognitionSupported() {
@@ -132,6 +134,11 @@ export async function startListening(onTranscript, onEnd, onError) {
   mediaRecorder = null;
   if (vadAudioCtx) { try { vadAudioCtx.close(); } catch (_) {} vadAudioCtx = null; }
 
+  // FIX: Reset Whisper fallback flag each session so mobile gets a fresh attempt.
+  // Previously this was module-level persistent, causing mobile to skip Web Speech
+  // API on every press after the first network error.
+  useWhisperFallback = false;
+
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   // Warm up mic
@@ -148,12 +155,11 @@ export async function startListening(onTranscript, onEnd, onError) {
   networkRetries = 0;
   isListening    = true;
 
-  if (useWhisperFallback || !SR) {
-    // Web Speech API failed in a previous session (or unsupported browser) —
-    // go straight to Whisper. Call directly (no setTimeout) to keep iOS gesture chain alive.
-    console.log('[STT] Using Whisper directly (Web Speech API unavailable/failed)');
+  if (!SR) {
+    // Web Speech API not available at all — go straight to Whisper.
+    console.log('[STT] Web Speech API unavailable, using Whisper');
+    useWhisperFallback = true;
     if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
-    // Pre-unlock AudioContext on iOS while still inside the gesture chain
     try {
       const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (tmpCtx.state === 'suspended') tmpCtx.resume().catch(() => {});
@@ -218,10 +224,14 @@ let vadAudioCtx    = null; // Web Audio context for voice activity detection
 const VAD_SILENCE_THRESHOLD  = 8;    // RMS below this = true silence (below typical room noise)
 const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = confirmed speech
 const VAD_SPEECH_SUSTAIN_MS  = 100;  // speech must sustain this long to set hasSpeech=true
-const VAD_SILENCE_MS         = 2000; // ms of true silence before stopping
+const VAD_SILENCE_MS         = 1500; // ms of true silence after speech before stopping (reduced from 2000)
 const VAD_MAX_MS             = 60000; // safety cap: 60s
 const VAD_MIN_MS             = 200;  // don't stop before 200ms
 const VAD_POLL_MS            = 80;   // how often to sample the analyser
+
+// FIX: "No words detected" timeout — if no recognisable speech has been
+// captured for this many ms after startup, stop and avoid hanging on background noise.
+const VAD_NO_WORDS_TIMEOUT_MS = 5000; // stop if no words heard within 5s of start
 
 // Live audio level callback — set by startListening to push RMS to the UI
 let onLiveAudioCb = null;
@@ -326,8 +336,10 @@ async function _startWhisperListening() {
 
   // ── Voice Activity Detection ──────────────────────────────
   // Uses Web Audio AnalyserNode to watch RMS levels in real time.
-  // Recording stops only after genuine silence following real speech,
-  // not after a fixed timer that would cut the user off mid-sentence.
+  // Stops after:
+  //   (a) genuine silence following real speech, OR
+  //   (b) no recognisable speech words for VAD_NO_WORDS_TIMEOUT_MS —
+  //       prevents hanging forever on background noise.
   try {
     vadAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     // iOS Safari starts AudioContext suspended — must resume inside a user-gesture chain
@@ -347,18 +359,30 @@ async function _startWhisperListening() {
     let _smoothed      = 0; // EMA for live meter
     const VAD_STARTUP_GRACE_MS = 100;
 
-    const stopRecording = () => {
+    const stopRecording = (reason) => {
       if (!vadRunning) return;
       vadRunning = false;
       clearTimeout(silenceTimer_);
+      clearTimeout(noWordsTimer_);
       if (onLiveAudioCb) onLiveAudioCb(0);
+      console.log(`[STT Whisper] VAD stop — ${reason}`);
       if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
     };
 
+    // FIX: "No words" safety timer — fires if we never confirmed speech within
+    // VAD_NO_WORDS_TIMEOUT_MS. This prevents the session hanging forever when
+    // background noise keeps RMS above the silence floor but no actual words
+    // are being said. On trigger, we stop the recording; onstop will see
+    // blob.size < 1500 and restart cleanly.
+    let noWordsTimer_ = setTimeout(() => {
+      if (!hasSpeech) {
+        stopRecording('no words detected timeout');
+      }
+    }, VAD_NO_WORDS_TIMEOUT_MS);
+
     // Safety cap — always fires regardless of VAD state
     const maxTimer = setTimeout(() => {
-      console.log('[STT Whisper] VAD: max duration reached');
-      stopRecording();
+      stopRecording('max duration reached');
     }, VAD_MAX_MS);
 
     const poll = () => {
@@ -384,6 +408,9 @@ async function _startWhisperListening() {
           if (!speechOnSince) speechOnSince = Date.now();
           if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
             hasSpeech = true;
+            // Speech confirmed — cancel the "no words" timeout
+            clearTimeout(noWordsTimer_);
+            noWordsTimer_ = null;
           }
           // Voice is loud — cancel any pending silence cutoff
           if (silenceTimer_) { clearTimeout(silenceTimer_); silenceTimer_ = null; }
@@ -394,9 +421,8 @@ async function _startWhisperListening() {
             // Below speech threshold — start the silence countdown if not already running
             if (!silenceTimer_) {
               silenceTimer_ = setTimeout(() => {
-                console.log('[STT Whisper] VAD stop — silence timeout');
                 clearTimeout(maxTimer);
-                stopRecording();
+                stopRecording('silence timeout after speech');
               }, VAD_SILENCE_MS);
             }
           }
@@ -445,6 +471,14 @@ function stripStopKeyword(text) {
   return text;
 }
 
+// ── Web Speech silence timer — also uses "no words" timeout ──
+// FIX: If the Web Speech API session produces zero interim/final results
+// for WS_NO_WORDS_TIMEOUT_MS after start, finalize immediately so background
+// noise doesn't hold the session open forever.
+const WS_SILENCE_MS        = 1500; // ms of no new words before auto-submit (reduced from 2000)
+const WS_NO_WORDS_TIMEOUT_MS = 5000; // stop if absolutely no words received within 5s
+let _wsNoWordsTimer = null;
+
 function _startRecognition(SR) {
   if (!isListening) return;
 
@@ -479,6 +513,23 @@ function _startRecognition(SR) {
   rec.interimResults  = true;
   rec.maxAlternatives = 1;
 
+  // FIX: Start "no words" watchdog. If the recognition session produces no
+  // results at all within WS_NO_WORDS_TIMEOUT_MS, bail out gracefully.
+  // This fires per-session but only finalises if we've truly heard nothing.
+  clearTimeout(_wsNoWordsTimer);
+  _wsNoWordsTimer = setTimeout(() => {
+    if (isListening && !fullTranscript.trim()) {
+      // No words at all after timeout — stop cleanly so the user isn't stuck.
+      console.log('[STT] No words detected timeout — stopping session');
+      _stopRecognitionClean();
+      const _onEnd = onEndCb;
+      onTranscriptCb = null;
+      onEndCb        = null;
+      onErrorCb      = null;
+      if (_onEnd) _onEnd(''); // empty string signals no speech captured
+    }
+  }, WS_NO_WORDS_TIMEOUT_MS);
+
   rec.onstart = () => {
     console.log('[STT] Recognition started');
     // Immediate visual feedback so user knows mic is active
@@ -488,6 +539,10 @@ function _startRecognition(SR) {
   rec.onresult = (event) => {
     // We got real speech — the connection is healthy, reset the error counter
     networkRetries = 0;
+
+    // Cancel the "no words" watchdog — we have words now
+    clearTimeout(_wsNoWordsTimer);
+    _wsNoWordsTimer = null;
 
     let interim = '';
     let final_  = '';
@@ -516,7 +571,7 @@ function _startRecognition(SR) {
       return;
     }
 
-    // Reset silence timer on every speech event
+    // FIX: Reset silence timer on every speech event (reduced to WS_SILENCE_MS)
     clearTimeout(silenceTimer); silenceTimer = null;
     if (fullTranscript.trim() || interim.trim()) {
       silenceTimer = setTimeout(() => {
@@ -527,7 +582,7 @@ function _startRecognition(SR) {
           if (onTranscriptCb) onTranscriptCb(result, true);
           if (onEndCb) onEndCb(result);
         }
-      }, 2000);
+      }, WS_SILENCE_MS);
     }
   };
 
@@ -548,12 +603,6 @@ function _startRecognition(SR) {
       console.log(`[STT] Network error — retry ${networkRetries}/${MAX_NETWORK_RETRIES}`);
 
       // Null ALL handlers and abort this rec immediately.
-      // Two races this prevents:
-      //   1. rec.onend fires ~300ms after onerror; without nulling it sees
-      //      recognition===rec and schedules another _startRecognition, which
-      //      races the 900ms retry and creates a ghost "retry 3/2" session.
-      //   2. A stale 900ms setTimeout from an earlier retry fires after we've
-      //      switched to Whisper — guard below catches any survivors.
       rec.onstart  = null;
       rec.onresult = null;
       rec.onerror  = null;
@@ -568,7 +617,7 @@ function _startRecognition(SR) {
         }, 400 * networkRetries);
         return;
       }
-      // Persistent network failures → switch to Whisper for this mic-press session
+      // Persistent network failures → switch to Whisper for this session
       console.log('[STT] Switching to Whisper fallback after persistent network errors');
       useWhisperFallback = true;
       networkRetries = 0;
@@ -582,6 +631,7 @@ function _startRecognition(SR) {
     if (err === 'not-allowed' || err === 'permission-denied') {
       isListening = false;
       clearTimeout(silenceTimer);
+      clearTimeout(_wsNoWordsTimer);
       recognition = null;
       if (onErrorCb) onErrorCb('Microphone access denied. Please allow microphone access in your browser settings.');
       return;
@@ -625,9 +675,11 @@ function _startRecognition(SR) {
 }
 
 // Cleanly stop the active recognition without triggering a restart
+let _recognitionStopping = false;
 function _stopRecognitionClean() {
   isListening = false;
   clearTimeout(silenceTimer); silenceTimer = null;
+  clearTimeout(_wsNoWordsTimer); _wsNoWordsTimer = null;
   _stopWebSpeechVADMeter();
   if (recognition) {
     const r = recognition;
@@ -644,6 +696,7 @@ export function stopListening() {
   isListening = false;
   whisperActive = false;
   clearTimeout(silenceTimer); silenceTimer = null;
+  clearTimeout(_wsNoWordsTimer); _wsNoWordsTimer = null;
   _stopWebSpeechVADMeter();
   onTranscriptCb = null;
   onEndCb        = null;
@@ -700,4 +753,3 @@ export function submitNow() {
     // onstop will call onTranscriptCb / onEndCb as usual
   }
 }
-
