@@ -28,6 +28,7 @@ function init() {
   bindSetupEvents();
   bindInterviewEvents();
   bindModalEvents();
+  bindMobileNav();
   showScreen('setup-screen');
 
   // Load sidebar history
@@ -191,6 +192,39 @@ async function handleLoadSession(sessionId) {
     showScreen('interview-screen');
     if (InterviewState.isVoiceMode()) showVoiceUI();
     else showChatUI();
+  }
+}
+
+// ── Mobile Nav ───────────────────────────────────────────────
+function bindMobileNav() {
+  const hamburger = document.getElementById('mobile-hamburger-btn');
+  const overlay = document.getElementById('sidebar-overlay');
+  const sidebar = document.getElementById('sidebar');
+
+  if (hamburger && overlay && sidebar) {
+    hamburger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sidebar.classList.add('sidebar--open');
+      overlay.classList.add('active');
+    });
+    overlay.addEventListener('click', () => {
+      sidebar.classList.remove('sidebar--open');
+      overlay.classList.remove('active');
+    });
+    // Close overlay when sidebar closes via its own logic
+    const observer = new MutationObserver(() => {
+      if (!sidebar.classList.contains('sidebar--open')) {
+        overlay.classList.remove('active');
+      }
+    });
+    observer.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  const mobileLogout = document.getElementById('mobile-logout-btn');
+  if (mobileLogout) {
+    mobileLogout.addEventListener('click', () => {
+      import('./auth.js').then(({ logout }) => logout());
+    });
   }
 }
 
