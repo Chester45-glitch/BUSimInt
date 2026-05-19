@@ -150,10 +150,16 @@ export async function startListening(onTranscript, onEnd, onError) {
 
   if (useWhisperFallback || !SR) {
     // Web Speech API failed in a previous session (or unsupported browser) —
-    // go straight to Whisper, skip the 2-retry wait entirely.
+    // go straight to Whisper. Call directly (no setTimeout) to keep iOS gesture chain alive.
     console.log('[STT] Using Whisper directly (Web Speech API unavailable/failed)');
     if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
-    setTimeout(() => _startWhisperListening(), 0);
+    // Pre-unlock AudioContext on iOS while still inside the gesture chain
+    try {
+      const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (tmpCtx.state === 'suspended') tmpCtx.resume().catch(() => {});
+      tmpCtx.close().catch(() => {});
+    } catch (_) {}
+    _startWhisperListening();
   } else {
     // Probe Web Speech API. Run a parallel AudioContext analyser so we can
     // push live RMS to the UI even before the first onresult fires.
@@ -289,7 +295,9 @@ async function _startWhisperListening() {
         const data = await res.json();
         const text = (data.text || '').trim();
         if (text) {
-          fullTranscript = text;
+          // Strip stop keyword phrase from the transcript if present
+          const cleanText = stripStopKeyword(text);
+          fullTranscript = cleanText;
           isListening   = false;
           whisperActive = false;
           mediaRecorder = null;
@@ -298,8 +306,8 @@ async function _startWhisperListening() {
           onTranscriptCb = null;
           onEndCb        = null;
           onErrorCb      = null;
-          if (_onTranscript) _onTranscript(text, true);
-          if (_onEnd)        _onEnd(text);
+          if (_onTranscript) _onTranscript(cleanText, true);
+          if (_onEnd)        _onEnd(cleanText);
           return; // Don't restart — we have a complete answer
         }
       }
@@ -404,8 +412,32 @@ async function _startWhisperListening() {
   mediaRecorder.start(50); // collect chunks every 50 ms for faster onstop data
 }
 
-// Track whether the current recognition instance was intentionally stopped by us
-let _recognitionStopping = false;
+// ── Stop Keywords ─────────────────────────────────────────────
+const STOP_PHRASES = [
+  "that's all", "thats all", "that's all po", "thats all po",
+  "that's it", "thats it", "that's it po", "thats it po",
+  "i'm done", "im done", "i am done",
+  "done talking", "done speaking",
+  "submit now", "submit answer", "submit that",
+  "send it", "send answer", "send that",
+  "finish", "finished",
+  "end answer",
+];
+
+function checkStopKeyword(text) {
+  const lower = text.toLowerCase().trim();
+  return STOP_PHRASES.some(phrase => lower.endsWith(phrase) || lower === phrase);
+}
+
+function stripStopKeyword(text) {
+  const lower = text.toLowerCase().trim();
+  for (const phrase of STOP_PHRASES) {
+    if (lower.endsWith(phrase)) {
+      return text.slice(0, text.toLowerCase().lastIndexOf(phrase)).trim().replace(/[,.\s]+$/, '').trim();
+    }
+  }
+  return text;
+}
 
 function _startRecognition(SR) {
   if (!isListening) return;
@@ -466,10 +498,23 @@ function _startRecognition(SR) {
     // Only show the placeholder if nothing has been heard yet
     if (onTranscriptCb) onTranscriptCb(display || '🎙️ Listening…', false);
 
+    // Check stop keywords against the full current transcript
+    const currentText = (fullTranscript + interim).trim();
+    if (currentText && checkStopKeyword(currentText)) {
+      const cleanText = stripStopKeyword(currentText);
+      clearTimeout(silenceTimer); silenceTimer = null;
+      fullTranscript = cleanText;
+      _stopRecognitionClean();
+      if (onTranscriptCb) onTranscriptCb(cleanText, true);
+      if (onEndCb) onEndCb(cleanText);
+      return;
+    }
+
     // Reset silence timer on every speech event
-    clearTimeout(silenceTimer);
+    clearTimeout(silenceTimer); silenceTimer = null;
     if (fullTranscript.trim() || interim.trim()) {
       silenceTimer = setTimeout(() => {
+        silenceTimer = null;
         if (fullTranscript.trim() && isListening) {
           const result = fullTranscript.trim();
           _stopRecognitionClean();
@@ -547,17 +592,16 @@ function _startRecognition(SR) {
 
   rec.onend = () => {
     if (rec !== recognition) return; // stale — ignore
-    // With continuous=true, onend only fires when recognition truly stops
+    // With continuous=true, onend only fires when recognition truly stops.
     // On mobile (continuous=false), onend fires after each utterance — restart
+    // unless a silence timer is actively running (meaning we're about to auto-submit).
     if (isListening) {
       setTimeout(() => {
         if (isListening && recognition === rec) {
-          // On mobile, don't restart if we have a silence timer running
-          // (that means user paused and we're about to auto-submit)
-          if (!silenceTimer || fullTranscript.trim() === '') {
-            recognition = null;
-            _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
-          }
+          // Only skip restart if silence timer is pending AND we have content to submit
+          if (silenceTimer !== null && fullTranscript.trim() !== '') return;
+          recognition = null;
+          _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
         }
       }, 200);
     }
@@ -581,7 +625,7 @@ function _startRecognition(SR) {
 // Cleanly stop the active recognition without triggering a restart
 function _stopRecognitionClean() {
   isListening = false;
-  clearTimeout(silenceTimer);
+  clearTimeout(silenceTimer); silenceTimer = null;
   _stopWebSpeechVADMeter();
   if (recognition) {
     const r = recognition;
@@ -597,7 +641,7 @@ function _stopRecognitionClean() {
 export function stopListening() {
   isListening = false;
   whisperActive = false;
-  clearTimeout(silenceTimer);
+  clearTimeout(silenceTimer); silenceTimer = null;
   _stopWebSpeechVADMeter();
   onTranscriptCb = null;
   onEndCb        = null;
