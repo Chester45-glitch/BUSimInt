@@ -1157,12 +1157,18 @@ body {
 #app-shell .screen         { display: none; flex: 1; min-height: 0; }
 #app-shell .screen.active  { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 
-/* Setup and analysis screens scroll normally */
+/* Setup and analysis screens need their own scroll — override the hidden from above */
 #setup-screen.active,
 #analysis-screen.active {
-  overflow-y: auto;
+  overflow-y: auto !important;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   height: 100%;
+}
+
+/* Interview screen keeps everything locked/contained */
+#interview-screen.active {
+  overflow: hidden !important;
 }
 
 /* ── Sidebar: chat-icon-only collapsed, full width when open ── */
@@ -1194,7 +1200,7 @@ body {
   display: flex; flex-direction: column;
   padding-left: 64px;
   height: 100vh;
-  overflow: hidden;
+  overflow: hidden; /* interview screen needs this; setup/analysis override at screen level */
 }
 
 /* ── Collapsed sidebar: 3-zone icon strip ───────────────────── */
