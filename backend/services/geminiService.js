@@ -4,8 +4,12 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const COOLDOWN_MS = 60 * 1000;
 // gemini-2.0-flash-lite is free, fast, and available in v1beta
 // fallback: gemini-1.5-flash-8b
-const GEMINI_MODELS = ['gemini-2.0-flash-lite', 'gemini-1.5-flash-8b', 'gemini-1.5-pro'];
-
+const GEMINI_MODELS = [
+  'gemini-3.1-flash-lite',  // 15 RPM — use this most
+  'gemini-2.5-flash-lite',  // 10 RPM — second
+  'gemini-2.5-flash',       // 5 RPM  — third
+  'gemini-3-flash',         // 5 RPM  — last resort
+];
 // ── Key Pool ─────────────────────────────────────────────────
 function buildPool() {
   const raw = [
