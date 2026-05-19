@@ -5,12 +5,12 @@ import { getUser, isLoggedIn } from './auth.js';
 import { startInterview, sendMessage, analyzeInterview } from './api.js';
 import { renderSidebar, highlightActiveSession } from './history.js';
 import {
-  speakText, stopSpeaking, startListening, stopListening, isSpeechRecognitionSupported, submitNow
+  speakText, stopSpeaking, startListening, stopListening, isSpeechRecognitionSupported, submitNow, setLiveAudioCallback
 } from './speech.js';
 import {
   showScreen, renderSetupScreen, selectCard, validateSetupAndGetErrors,
   showSetupError, appendMessage, showTypingIndicator, hideTypingIndicator,
-  setInterviewHeader, setVoiceState, updateVoiceTranscript,
+  setInterviewHeader, setVoiceState, updateVoiceTranscript, setLiveMeter,
   showToast, showEndConfirmModal, renderAnalysis, triggerAnalysisAnimations,
   updateLiveSidebar, resetLiveSidebar
 } from './ui.js';
@@ -323,7 +323,7 @@ function handleVoiceBtnClick() {
   }
   if (InterviewState.isListening) {
     stopListening(); InterviewState.setListening(false); setVoiceState('idle');
-    setSubmitBtnVisible(false); updateVoiceTranscript(''); return;
+    setSubmitBtnVisible(false); updateVoiceTranscript(''); setLiveMeter(0); return;
   }
   if (InterviewState.isLoading) return;
 
@@ -331,6 +331,9 @@ function handleVoiceBtnClick() {
   InterviewState.setListening(true);
   updateVoiceTranscript('');
   setSubmitBtnVisible(false);
+
+  // Push live RMS levels to the caption area so user sees instant feedback
+  setLiveAudioCallback((rms) => setLiveMeter(rms));
 
   startListening(
     (text) => {

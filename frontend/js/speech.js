@@ -145,9 +145,39 @@ export async function startListening(onTranscript, onEnd, onError) {
     if (onTranscriptCb) onTranscriptCb('🎙️ Listening…', false);
     setTimeout(() => _startWhisperListening(), 0);
   } else {
-    // Probe Web Speech API. It will self-demote to Whisper after 2 network errors.
+    // Probe Web Speech API. Run a parallel AudioContext analyser so we can
+    // push live RMS to the UI even before the first onresult fires.
+    _startWebSpeechVADMeter();
     setTimeout(() => _startRecognition(SR), 0);
   }
+}
+
+// Lightweight audio meter for Web Speech path (no VAD logic — just RMS → UI)
+let _wsMeterCtx = null;
+function _startWebSpeechVADMeter() {
+  if (!micStream || !micStream.active) return;
+  try {
+    _wsMeterCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source   = _wsMeterCtx.createMediaStreamSource(micStream);
+    const analyser = _wsMeterCtx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    const tick = () => {
+      if (!isListening || !_wsMeterCtx) return;
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length) * 100;
+      if (onLiveAudioCb) onLiveAudioCb(rms);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } catch (_) {}
+}
+function _stopWebSpeechVADMeter() {
+  if (_wsMeterCtx) { try { _wsMeterCtx.close(); } catch (_) {} _wsMeterCtx = null; }
+  if (onLiveAudioCb) onLiveAudioCb(0);
 }
 
 // ── Whisper fallback via MediaRecorder + Web Audio VAD ───────
@@ -164,9 +194,13 @@ let vadAudioCtx    = null; // Web Audio context for voice activity detection
 const VAD_SILENCE_THRESHOLD  = 10;   // RMS below this = silence
 const VAD_SPEECH_THRESHOLD   = 22;   // RMS above this = real speech (raised from 12)
 const VAD_SPEECH_SUSTAIN_MS  = 80;   // speech must sustain this long before hasSpeech=true
-const VAD_SILENCE_MS         = 500;  // ms of silence after speech before we stop
+const VAD_SILENCE_MS         = 1200; // ms of CONTINUOUS silence before stopping (natural pause ~400-600ms)
 const VAD_MAX_MS             = 45000; // safety cap: stop after 45 s regardless
 const VAD_MIN_MS             = 150;  // don't stop before 150 ms (avoid clipping first word)
+
+// Live audio level callback — set by startListening to push RMS to the UI
+let onLiveAudioCb = null;
+export function setLiveAudioCallback(cb) { onLiveAudioCb = cb; }
 
 function _startWhisperListening() {
   if (!isListening) return;
@@ -282,6 +316,9 @@ function _startWhisperListening() {
       }
       const rms = Math.sqrt(sum / buf.length) * 100;
 
+      // Push live level to UI every tick so user sees instant feedback
+      if (onLiveAudioCb) onLiveAudioCb(rms);
+
       const elapsed = Date.now() - startTime;
 
       if (rms >= VAD_SPEECH_THRESHOLD) {
@@ -297,9 +334,8 @@ function _startWhisperListening() {
         // breath/click/noise-spike from prematurely starting the silence timer
         if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
           hasSpeech = true;
-          // Immediately tell the user their voice is being picked up
-          if (onTranscriptCb) onTranscriptCb('🎙️ Got you, keep going…', false);
         }
+        // Voice came back — cancel any pending silence stop
         silenceStart = null;
       } else {
         speechOnSince = null; // reset sustain on any quiet frame
@@ -313,6 +349,7 @@ function _startWhisperListening() {
           // User stopped speaking — commit the recording
           console.log('[STT Whisper] VAD: silence detected, stopping recording');
           vadRunning = false;
+          if (onLiveAudioCb) onLiveAudioCb(0); // clear the bar
           if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
           return;
         }
@@ -322,6 +359,7 @@ function _startWhisperListening() {
       if (elapsed >= VAD_MAX_MS) {
         console.log('[STT Whisper] VAD: max duration reached');
         vadRunning = false;
+        if (onLiveAudioCb) onLiveAudioCb(0);
         if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
         return;
       }
@@ -513,6 +551,7 @@ function _startRecognition(SR) {
 function _stopRecognitionClean() {
   isListening = false;
   clearTimeout(silenceTimer);
+  _stopWebSpeechVADMeter();
   if (recognition) {
     const r = recognition;
     recognition = null;
@@ -528,9 +567,11 @@ export function stopListening() {
   isListening = false;
   whisperActive = false;
   clearTimeout(silenceTimer);
+  _stopWebSpeechVADMeter();
   onTranscriptCb = null;
   onEndCb        = null;
   onErrorCb      = null;
+  onLiveAudioCb  = null;
   fullTranscript = '';
 
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {

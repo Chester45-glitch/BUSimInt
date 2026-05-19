@@ -136,7 +136,49 @@ export function setVoiceState(state) {
 
 export function updateVoiceTranscript(text) {
   const el = document.getElementById('voice-interim-text');
-  if (el) { el.textContent = text || ''; el.style.display = text ? 'block' : 'none'; }
+  if (!el) return;
+  if (text && !text.startsWith('🎙️')) {
+    // Real transcript words — show text, hide meter
+    el.innerHTML = `<span class="voice-caption-text">${text}</span>`;
+    el.style.display = 'block';
+    const meter = document.getElementById('voice-live-meter');
+    if (meter) meter.style.display = 'none';
+  } else if (text) {
+    // Placeholder (🎙️) — clear text, let meter show
+    el.textContent = '';
+    el.style.display = 'none';
+  } else {
+    el.textContent = '';
+    el.style.display = 'none';
+    const meter = document.getElementById('voice-live-meter');
+    if (meter) meter.style.display = 'none';
+  }
+}
+
+// Live audio level meter — shows a bar that pulses with the user's voice
+let _meterBars = null;
+export function setLiveMeter(rms) {
+  let meter = document.getElementById('voice-live-meter');
+  if (!meter) return;
+
+  const textEl = document.getElementById('voice-interim-text');
+  const hasText = textEl && textEl.querySelector('.voice-caption-text');
+  if (hasText) return; // don't show meter while words are visible
+
+  if (rms > 3) {
+    meter.style.display = 'flex';
+    // Map rms (0-100) to bar heights
+    if (!_meterBars) _meterBars = Array.from(meter.querySelectorAll('.vm-bar'));
+    const n = _meterBars.length;
+    _meterBars.forEach((bar, i) => {
+      // Each bar gets a slightly offset amplitude for a wave feel
+      const offset = Math.abs(Math.sin((i / n) * Math.PI));
+      const h = Math.max(4, Math.min(28, (rms / 100) * 28 * offset + 4));
+      bar.style.height = h + 'px';
+    });
+  } else {
+    meter.style.display = 'none';
+  }
 }
 
 // ── Live Sidebar Reset ───────────────────────────────────────
