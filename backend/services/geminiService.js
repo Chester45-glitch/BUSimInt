@@ -8,12 +8,14 @@ const GEMINI_MODELS = ['gemini-2.0-flash-lite', 'gemini-1.5-flash-8b', 'gemini-1
 
 // ── Key Pool ─────────────────────────────────────────────────
 function buildPool() {
-  const raw = [
-    process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY,
-    process.env.GEMINI_API_KEY_2,
-    process.env.GEMINI_API_KEY_3,
-    process.env.GEMINI_API_KEY_4,
-  ];
+  // Collect GEMINI_API_KEY_1 … GEMINI_API_KEY_10 (plus bare GEMINI_API_KEY as alias for _1)
+  const raw = [];
+  const base = process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY;
+  if (base) raw.push(base);
+  for (let i = 2; i <= 10; i++) {
+    const k = process.env[`GEMINI_API_KEY_${i}`];
+    if (k) raw.push(k);
+  }
 
   const pool = raw
     .filter(k => k && k.trim() && !k.startsWith('your_') && !k.startsWith('AIza...'))
