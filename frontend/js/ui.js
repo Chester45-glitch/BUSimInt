@@ -68,9 +68,7 @@ export function setInterviewHeader(config) {
   const modeBadge = document.getElementById('interview-mode-badge');
   if (badge) badge.textContent = config.jobTitle || config.type;
   if (modeBadge) {
-    modeBadge.innerHTML = config.mode === 'voice'
-      ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg> Voice Mode`
-      : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> Chat Mode`;
+    modeBadge.textContent = config.mode === 'voice' ? 'Voice Mode' : 'Chat Mode';
   }
 }
 
@@ -84,14 +82,13 @@ export function appendMessage(role, content, animate = true) {
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const avatar = role === 'assistant'
     ? `<img src="./BUSimInt_Logo.png" alt="AI" style="width:100%;height:100%;object-fit:contain;border-radius:50%;">`
-    : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>`;
+    : `<span style="font-size:.8rem;font-weight:700;color:var(--accent);">You</span>`;
 
   el.innerHTML = `
     <div class="message-avatar">${avatar}</div>
     <div class="message-body">
       <div class="message-bubble">
         <p class="message-text">${escapeHTML(content)}</p>
-        ${role === 'assistant' ? `<button class="speak-btn" data-content="${escapeAttr(content)}" title="Read aloud"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg></button>` : ''}
       </div>
       <span class="message-time">${time}</span>
     </div>`;
@@ -186,7 +183,7 @@ export function setLiveMeter(rms) {
 export function resetLiveSidebar() {
   const ring = document.getElementById('ering-fill');
   if (ring) {
-    const circumference = 2 * Math.PI * 50;
+    const circumference = 2 * Math.PI * 50; // 314.159
     ring.style.strokeDashoffset = circumference;
     ring.style.stroke = 'var(--accent)';
   }
@@ -235,7 +232,7 @@ export function updateLiveSidebar(transcript) {
   const ring = document.getElementById('ering-fill');
   if (ring) {
     const pct = conf;
-    const circumference = 2 * Math.PI * 50;
+    const circumference = 2 * Math.PI * 50; // = 314.159
     ring.style.strokeDashoffset = circumference - (pct / 100) * circumference;
     ring.style.stroke = pct >= 65 ? '#22C55E' : pct >= 45 ? '#F59E0B' : '#F43F5E';
   }
@@ -281,7 +278,8 @@ export function showToast(message, type = 'info', duration = 3000) {
   const toast = document.createElement('div');
   toast.id = 'toast';
   toast.className = `toast toast--${type}`;
-  toast.innerHTML = `<span>${type === 'error' ? '⚠️' : type === 'success' ? '✅' : 'ℹ️'}</span><span>${escapeHTML(message)}</span>`;
+  const label = type === 'error' ? 'Error' : type === 'success' ? 'Done' : 'Info';
+  toast.innerHTML = `<span class="toast-label">${label}</span><span>${escapeHTML(message)}</span>`;
   document.body.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('toast--visible'));
   setTimeout(() => {
@@ -327,7 +325,7 @@ export function renderAnalysis(analysisData, metadata) {
   // Emotion bars
   if (analysis.emotionAnalysis?.breakdown) {
     const b = analysis.emotionAnalysis.breakdown;
-    const labels = { confident:'💪 Confident', nervous:'😰 Nervous', enthusiastic:'🔥 Enthusiastic', analytical:'🧠 Analytical' };
+    const labels = { confident:'Confident', nervous:'Nervous', enthusiastic:'Enthusiastic', analytical:'Analytical' };
     document.getElementById('emotion-bars').innerHTML = Object.entries(b).map(([k,v]) => `
       <div class="metric-bar">
         <div class="metric-bar__header"><span>${labels[k]||k}</span><span class="metric-bar__value">${v}%</span></div>
@@ -337,7 +335,7 @@ export function renderAnalysis(analysisData, metadata) {
 
   // Answer strength bars
   if (analysis.answerStrength) {
-    const labels = { relevance:'🎯 Relevance', structure:'🏗️ Structure', specificity:'🔍 Specificity', communication:'🗣️ Communication' };
+    const labels = { relevance:'Relevance', structure:'Structure', specificity:'Specificity', communication:'Communication' };
     document.getElementById('strength-bars').innerHTML = Object.entries(analysis.answerStrength).map(([k,v]) => `
       <div class="metric-bar">
         <div class="metric-bar__header"><span>${labels[k]||k}</span><span class="metric-bar__value">${v}%</span></div>
@@ -354,8 +352,8 @@ export function renderAnalysis(analysisData, metadata) {
     (analysis.improvements || []).map(imp => `
       <div class="improvement-card">
         <div class="improvement-area">${escapeHTML(imp.area||'')}</div>
-        <div class="improvement-issue">⚠️ ${escapeHTML(imp.issue||'')}</div>
-        <div class="improvement-suggestion">💡 ${escapeHTML(imp.suggestion||'')}</div>
+        <div class="improvement-issue">Issue: ${escapeHTML(imp.issue||'')}</div>
+        <div class="improvement-suggestion">Tip: ${escapeHTML(imp.suggestion||'')}</div>
       </div>`).join('') || '<p>No improvements flagged.</p>';
 
   // Q&A feedback
@@ -366,9 +364,9 @@ export function renderAnalysis(analysisData, metadata) {
           <span class="qf-num">Q${i+1}</span>
           <span class="qf-score qf-score--${scoreClass(item.score)}">${item.score}/100</span>
         </div>
-        <div class="qf-question">❓ ${escapeHTML(item.question||'')}</div>
-        <div class="qf-answer">💬 ${escapeHTML(item.answer||'')}</div>
-        <div class="qf-feedback">📝 ${escapeHTML(item.feedback||'')}</div>
+        <div class="qf-question">Question: ${escapeHTML(item.question||'')}</div>
+        <div class="qf-answer">Your answer: ${escapeHTML(item.answer||'')}</div>
+        <div class="qf-feedback">Feedback: ${escapeHTML(item.feedback||'')}</div>
       </div>`).join('');
 }
 

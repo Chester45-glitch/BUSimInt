@@ -24,10 +24,10 @@
       <h1 class="login-headline">Ace your next<br><em>interview.</em></h1>
       <p class="login-sub">Practice with an AI interviewer. Get real-time feedback on confidence, clarity, and your answers.</p>
       <ul class="login-features">
-        <li><span class="feat-icon">🤖</span> AI-powered interview simulation</li>
-        <li><span class="feat-icon">🎙️</span> Voice and chat modes</li>
-        <li><span class="feat-icon">📊</span> Emotion & performance analysis</li>
-        <li><span class="feat-icon">📁</span> Full interview history</li>
+        <li>AI-powered interview simulation</li>
+        <li>Voice and chat modes</li>
+        <li>Emotion and performance analysis</li>
+        <li>Full interview history</li>
       </ul>
     </div>
     <div class="login-left-footer">
@@ -46,7 +46,6 @@
       <div id="google-btn-container" class="google-btn-wrap"></div>
 
       <div class="login-note">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
         Sign in with the Google account you use for your enrolled classes. No password required.
       </div>
 
@@ -155,7 +154,7 @@
             <div class="stats-card-title">Emotion Analysis</div>
             <div class="emotion-ring-wrap">
               <div class="emotion-ring" id="live-emotion-ring">
-                <svg viewBox="0 0 120 120" width="80" height="80">
+                <svg viewBox="0 0 120 120" width="110" height="110">
                   <circle class="ering-track" cx="60" cy="60" r="50"/>
                   <circle class="ering-fill" id="ering-fill" cx="60" cy="60" r="50"/>
                 </svg>
@@ -182,7 +181,7 @@
             <p class="strength-note">Full analysis after session ends</p>
           </div>
           <div class="stats-card stats-card--tip" id="live-tip-card" style="display:none">
-            <div class="stats-card-title">💡 Quick Tip</div>
+            <div class="stats-card-title">Quick Tip</div>
             <p class="tip-text" id="live-tip-text"></p>
           </div>
         </aside>
@@ -244,20 +243,19 @@
               <div id="strength-bars"></div>
             </div>
             <div class="a-card">
-              <p class="a-card-title">✅ Strengths</p>
+              <p class="a-card-title">Strengths</p>
               <ul class="strengths-list" id="strengths-list"></ul>
             </div>
             <div class="a-card a-card--full">
-              <p class="a-card-title">⚠️ Areas to Improve</p>
+              <p class="a-card-title">Areas to Improve</p>
               <div id="improvements-list"></div>
             </div>
             <div class="a-card a-card--full">
-              <p class="a-card-title">📝 Question-by-Question Feedback</p>
+              <p class="a-card-title">Question-by-Question Feedback</p>
               <div id="question-feedback-list"></div>
             </div>
           </div>
           <div class="top-tip-bar">
-            <span class="top-tip-icon">🏆</span>
             <div>
               <p class="top-tip-label">Top Recommendation</p>
               <p class="top-tip-text" id="top-tip"></p>
@@ -273,9 +271,6 @@
 <!-- Modal -->
 <div id="end-modal" class="modal-overlay" role="dialog" aria-modal="true">
   <div class="modal-box">
-    <div class="modal-icon">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
-    </div>
     <h2 class="modal-title">End this interview?</h2>
     <p class="modal-body">This will end the simulation and generate your full performance analysis.</p>
     <div class="modal-actions">

@@ -434,7 +434,10 @@ function _startRecognition(SR) {
   recognition = rec;
 
   rec.lang            = Config.SPEECH.LANG;
-  rec.continuous      = true;   // continuous avoids the onend→restart→aborted cycle
+  // iOS/Android don't support continuous=true reliably — use continuous=false
+  // and restart the session in onend to simulate continuous capture.
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  rec.continuous      = !isMobile;  // false on mobile, true on desktop
   rec.interimResults  = true;
   rec.maxAlternatives = 1;
 
@@ -545,14 +548,18 @@ function _startRecognition(SR) {
   rec.onend = () => {
     if (rec !== recognition) return; // stale — ignore
     // With continuous=true, onend only fires when recognition truly stops
-    // (network drop, browser killed it, etc.) — restart if we're still listening
+    // On mobile (continuous=false), onend fires after each utterance — restart
     if (isListening) {
       setTimeout(() => {
         if (isListening && recognition === rec) {
-          recognition = null;
-          _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+          // On mobile, don't restart if we have a silence timer running
+          // (that means user paused and we're about to auto-submit)
+          if (!silenceTimer || fullTranscript.trim() === '') {
+            recognition = null;
+            _startRecognition(window.SpeechRecognition || window.webkitSpeechRecognition);
+          }
         }
-      }, 300);
+      }, 200);
     }
   };
 
