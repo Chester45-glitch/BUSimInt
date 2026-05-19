@@ -1221,6 +1221,30 @@ body {
   max-width: 400px !important;
 }
 
+/* Mobile: custom "Continue with Google" button overlay */
+@media (max-width: 768px) {
+  .google-btn-mobile-label {
+    display: none; /* hidden by default; shown only as fallback */
+  }
+  /* Show the cosmetic label only when the real google iframe hasn't loaded */
+  .google-btn-wrap:not(:has(iframe)):not(:has(div > div)) .google-btn-mobile-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: 100%;
+    padding: 16px 20px;
+    background: #fff;
+    border: 1.5px solid #dadce0;
+    border-radius: 14px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #3c4043;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    margin-bottom: 4px;
+  }
+}
+
 .login-note {
   background: #EEF4FF;
   border: 1px solid #BDD5FF;
@@ -1577,11 +1601,14 @@ body {
   }
   .login-form-wrap {
     max-width: 100%;
-    padding: 0 clamp(20px, 6vw, 36px) clamp(36px, 8vw, 52px);
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
     min-height: 100dvh;
+    overflow-x: hidden;
   }
   /* Mobile brand header: dark area at the top */
   .login-mobile-header {
@@ -1625,24 +1652,41 @@ body {
     background: #F8F9FA;
     border-radius: 28px 28px 0 0;
     flex: 1;
-    padding: clamp(28px, 6vw, 40px) clamp(20px, 5vw, 32px) clamp(28px, 6vw, 40px);
+    padding: clamp(32px, 7vw, 48px) clamp(24px, 6vw, 36px) clamp(32px, 7vw, 48px);
     display: flex;
     flex-direction: column;
     box-shadow: 0 -4px 24px rgba(0,0,0,.12);
   }
   .login-title {
-    font-size: clamp(1.5rem, 5vw, 1.9rem);
+    font-size: clamp(1.75rem, 6vw, 2.1rem);
     text-align: center;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
   .login-desc {
     text-align: center;
-    margin-bottom: 28px;
-    font-size: .875rem;
+    margin-bottom: 32px;
+    font-size: .95rem;
   }
-  .login-note { font-size: .82rem; }
-  .google-btn-wrap { justify-content: center; }
-  .login-links { margin-top: auto; padding-top: 24px; }
+  .login-note {
+    font-size: .875rem;
+    padding: 14px 16px;
+    border-radius: 14px;
+  }
+  /* Google button: force full width, no overflow */
+  .google-btn-wrap {
+    justify-content: center;
+    width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+    margin-bottom: 20px;
+  }
+  .google-btn-wrap > div,
+  .google-btn-wrap iframe {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: unset !important;
+  }
+  .login-links { margin-top: auto; padding-top: 28px; }
 
   .mobile-topbar {
     display: flex;
@@ -1689,6 +1733,6 @@ body {
   .type-label { font-size: .82rem; }
   .setup-card { padding: 18px 14px; }
   .setup-title { font-size: 1.5rem; }
-  .login-form-wrap { padding: 32px 20px 40px; }
-  .login-title { font-size: 1.5rem; }
+  .login-form-wrap { padding: 0; }
+  .login-title { font-size: 1.6rem; }
 }
