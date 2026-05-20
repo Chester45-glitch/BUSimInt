@@ -386,6 +386,38 @@ body {
 .message-time { font-size: .8rem; color: var(--text3); }
 .message--user .message-time { color: rgba(91,107,255,.5); }
 
+/* Message footer: time + 3-dot menu row */
+.message-footer {
+  display: flex; align-items: center; gap: 6px;
+}
+.message--user .message-footer { justify-content: flex-end; }
+
+/* Message 3-dot action menu (assistant only) */
+.msg-actions { position: relative; display: flex; align-items: center; }
+.msg-menu-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--text3); padding: 3px 5px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--t), color var(--t);
+  opacity: 0.6;
+}
+.msg-menu-btn:hover { background: var(--surface2); color: var(--text1); opacity: 1; }
+.msg-dropdown {
+  display: none; position: absolute; left: 0; top: calc(100% + 4px);
+  background: var(--surface1, #fff); border: 1px solid rgba(0,0,0,.1);
+  border-radius: var(--radius-sm, 8px); padding: 4px;
+  z-index: 400; min-width: 150px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+}
+.msg-dropdown.open { display: block; }
+.msg-dropdown-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-radius: 6px; font-size: .88rem;
+  color: var(--text2, #555); cursor: pointer;
+  transition: background var(--t), color var(--t); white-space: nowrap;
+}
+.msg-dropdown-item:hover { background: var(--surface2, #f0f0f0); color: var(--text1, #111); }
+
 /* Speak button on AI messages */
 .speak-btn {
   position: absolute; top: 6px; right: 6px;
@@ -1486,10 +1518,12 @@ body {
 .session-menu-btn {
   opacity: 0; width: 30px; height: 30px; border-radius: 6px;
   background: none; border: none; color: rgba(255,255,255,.5);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; display: none; align-items: center; justify-content: center;
   flex-shrink: 0; transition: all var(--t); position: relative;
 }
-.sidebar-session-item:hover .session-menu-btn { opacity: 1; }
+/* Only show 3-dot menu when sidebar is expanded */
+.sidebar--open .session-menu-btn { display: flex; }
+.sidebar--open .sidebar-session-item:hover .session-menu-btn { opacity: 1; }
 .session-menu-btn:hover { color: #fff; background: rgba(255,255,255,.12); }
 
 .session-dropdown {
