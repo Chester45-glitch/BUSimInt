@@ -84,17 +84,89 @@ export function appendMessage(role, content, animate = true) {
     ? `<img src="./BUSimInt_Logo.png" alt="AI" style="width:100%;height:100%;object-fit:contain;border-radius:50%;">`
     : `<span style="font-size:.8rem;font-weight:700;color:var(--accent);">You</span>`;
 
+  const messageMenuHtml = role === 'assistant' ? `
+    <div class="msg-actions">
+      <button class="msg-menu-btn" title="Options" aria-label="Message options">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
+        </svg>
+      </button>
+      <div class="msg-dropdown">
+        <div class="msg-dropdown-item msg-copy-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy text
+        </div>
+        <div class="msg-dropdown-item msg-speak-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+          Speak
+        </div>
+      </div>
+    </div>` : '';
+
   el.innerHTML = `
     <div class="message-avatar">${avatar}</div>
     <div class="message-body">
       <div class="message-bubble">
         <p class="message-text">${escapeHTML(content)}</p>
       </div>
-      <span class="message-time">${time}</span>
+      <div class="message-footer">
+        <span class="message-time">${time}</span>
+        ${messageMenuHtml}
+      </div>
     </div>`;
 
   container.appendChild(el);
   requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
+
+  // Bind message action buttons
+  if (role === 'assistant') {
+    const menuBtn = el.querySelector('.msg-menu-btn');
+    const dropdown = el.querySelector('.msg-dropdown');
+    const copyBtn = el.querySelector('.msg-copy-btn');
+    const speakBtn = el.querySelector('.msg-speak-btn');
+
+    menuBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Close other open message dropdowns
+      document.querySelectorAll('.msg-dropdown.open').forEach(d => {
+        if (d !== dropdown) d.classList.remove('open');
+      });
+      dropdown?.classList.toggle('open');
+    });
+
+    copyBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown?.classList.remove('open');
+      navigator.clipboard.writeText(content).then(() => {
+        showToast('Copied to clipboard', 'success', 2000);
+      }).catch(() => {
+        // Fallback for older browsers
+        const ta = document.createElement('textarea');
+        ta.value = content;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        showToast('Copied to clipboard', 'success', 2000);
+      });
+    });
+
+    speakBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown?.classList.remove('open');
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utt = new SpeechSynthesisUtterance(content);
+        utt.rate = 0.95;
+        utt.pitch = 1;
+        window.speechSynthesis.speak(utt);
+        showToast('Speaking…', 'info', 2000);
+      } else {
+        showToast('Text-to-speech not supported in this browser', 'error', 3000);
+      }
+    });
+  }
+
   return el;
 }
 
@@ -394,3 +466,8 @@ function escapeAttr(str) {
 }
 
 export { escapeHTML };
+
+// Close message dropdowns when clicking outside
+document.addEventListener('click', () => {
+  document.querySelectorAll('.msg-dropdown.open').forEach(d => d.classList.remove('open'));
+});
