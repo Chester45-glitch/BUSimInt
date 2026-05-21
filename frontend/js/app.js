@@ -383,11 +383,11 @@ function handleVoiceBtnClick() {
   setLiveAudioCallback((rms) => setLiveMeter(rms));
 
   startListening(
-    (text) => {
+    (text, isFinal) => {
       updateVoiceTranscript(text);
-      // Show submit button as soon as there's real text (not just the placeholder)
-      const hasText = text && !text.startsWith('🎙️');
-      setSubmitBtnVisible(hasText);
+      // Only show submit button for real transcript text — not status placeholders
+      const hasText = text && !text.startsWith('🎙️') && !text.startsWith('🔄');
+      setSubmitBtnVisible(hasText && !isFinal);
     },
     async (finalText) => {
       InterviewState.setListening(false);
