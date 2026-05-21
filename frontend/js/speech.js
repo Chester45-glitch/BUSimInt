@@ -141,10 +141,7 @@ export async function startListening(onTranscript, onEnd, onError) {
   if (isListening) stopListening();
 
   // Reset all stale state
-  whisperActive        = false;
-  _whisperSubmitOnDone = false;
-  _silentChunkCount    = 0;
-  _vadSilenceDetected  = false;
+  whisperActive = false;
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch (_) {}
   }
@@ -223,14 +220,10 @@ function _stopWebSpeechVADMeter() {
 }
 
 // ── Whisper via MediaRecorder + VAD ──────────────────────────
-let mediaRecorder        = null;
-let audioChunks          = [];
-let whisperActive        = false;
-let vadAudioCtx          = null;
-let _whisperSubmitOnDone = false; // set by submitNow() to finalize instead of accumulate
-let _silentChunkCount    = 0;     // counts consecutive silent/empty chunks (no new words)
-const MAX_SILENT_CHUNKS  = 5;     // auto-submit after this many silent chunks in a row
-let _vadSilenceDetected  = false; // set by VAD when it stops due to silence-after-speech
+let mediaRecorder  = null;
+let audioChunks    = [];
+let whisperActive  = false;
+let vadAudioCtx    = null;
 
 // VAD constants
 // VAD_SPEECH_THRESHOLD is now a MINIMUM floor — the actual threshold is
@@ -306,48 +299,8 @@ async function _startWhisperListening() {
     const blob = new Blob(audioChunks, { type: mimeType });
     audioChunks = [];
 
-    // Helper: finalize and deliver the accumulated transcript
-    const _finalize = (reason) => {
-      const accumulated = fullTranscript.trim();
-      console.log(`[STT Whisper] Finalizing (${reason}) — "${accumulated.slice(0, 60)}…"`);
-      _whisperSubmitOnDone = false;
-      _silentChunkCount    = 0;
-      _vadSilenceDetected  = false;
-      isListening   = false;
-      whisperActive = false;
-      mediaRecorder = null;
-      const _cb = onTranscriptCb, _end = onEndCb;
-      onTranscriptCb = null; onEndCb = null; onErrorCb = null;
-      if (_cb)  _cb(accumulated, true);
-      if (_end) _end(accumulated);
-    };
-
-    // If submitNow() was called and we already have accumulated text, finalize immediately
-    // without waiting for this (possibly empty) final chunk to process.
-    if (_whisperSubmitOnDone && fullTranscript.trim()) {
-      _finalize('submitNow early');
-      return;
-    }
-
     if (blob.size < 1500) {
-      // Too small — count as a silent chunk
-      _silentChunkCount++;
-      console.log(`[STT Whisper] Blob too small — silent chunk ${_silentChunkCount}/${MAX_SILENT_CHUNKS}`);
-
-      // submitNow() or VAD silence with accumulated text — finalize
-      if ((_whisperSubmitOnDone || _vadSilenceDetected) && fullTranscript.trim()) {
-        _finalize(_vadSilenceDetected ? 'VAD silence after speech (small blob)' : 'submitNow on small blob');
-        return;
-      }
-
-      // Auto-submit after too many silent chunks with accumulated text
-      if (_silentChunkCount >= MAX_SILENT_CHUNKS && fullTranscript.trim()) {
-        _finalize(`${MAX_SILENT_CHUNKS} silent chunks — auto-submit`);
-        return;
-      }
-
-      // Restart quietly and keep listening
-      _vadSilenceDetected = false;
+      // Too small — no real speech; restart quietly
       if (isListening) setTimeout(() => _startWhisperListening(), 300);
       return;
     }
@@ -368,24 +321,15 @@ async function _startWhisperListening() {
         const data = await res.json();
         const text = (data.text || '').trim();
         if (text) {
-          // User spoke — reset the silent chunk counter
-          _silentChunkCount = 0;
-
-          // Always accumulate this chunk first
-          const hadStopKeyword = checkStopKeyword(text);
-          const cleanChunk = stripStopKeyword(text);
-          fullTranscript = (fullTranscript + (fullTranscript ? ' ' : '') + cleanChunk).trim();
-
-          // Finalize if: stop keyword spoken, submitNow() called, OR VAD detected end-of-speech silence
-          if (hadStopKeyword || _whisperSubmitOnDone || _vadSilenceDetected) {
-            _finalize(hadStopKeyword ? 'stop keyword' : _whisperSubmitOnDone ? 'submitNow' : 'VAD silence after speech');
-            return;
-          }
-
-          // Otherwise: show accumulated transcript as interim and keep listening for more
-          console.log(`[STT Whisper] Chunk accumulated (${fullTranscript.length} chars) — continuing to listen`);
-          if (onTranscriptCb) onTranscriptCb(fullTranscript, false);
-          if (isListening) setTimeout(() => _startWhisperListening(), 200);
+          const cleanText = stripStopKeyword(text);
+          fullTranscript = cleanText;
+          isListening    = false;
+          whisperActive  = false;
+          mediaRecorder  = null;
+          const _cb = onTranscriptCb, _end = onEndCb;
+          onTranscriptCb = null; onEndCb = null; onErrorCb = null;
+          if (_cb)  _cb(cleanText, true);
+          if (_end) _end(cleanText);
           return;
         }
       }
@@ -393,22 +337,7 @@ async function _startWhisperListening() {
       console.warn('[STT Whisper] transcription failed:', e.message);
     }
 
-    // No text from API — treat as silent chunk
-    _silentChunkCount++;
-    console.log(`[STT Whisper] No text returned — silent chunk ${_silentChunkCount}/${MAX_SILENT_CHUNKS}`);
-
-    if ((_whisperSubmitOnDone || _vadSilenceDetected) && fullTranscript.trim()) {
-      _finalize(_vadSilenceDetected ? 'VAD silence after speech (no-text chunk)' : 'submitNow on no-text chunk');
-      return;
-    }
-
-    if (_silentChunkCount >= MAX_SILENT_CHUNKS && fullTranscript.trim()) {
-      _finalize(`${MAX_SILENT_CHUNKS} silent chunks — auto-submit`);
-      return;
-    }
-
-    // Restart and keep listening
-    _vadSilenceDetected = false; // reset so next cycle starts fresh
+    // No text — restart
     if (isListening) setTimeout(() => _startWhisperListening(), 200);
   };
 
@@ -501,7 +430,6 @@ async function _startWhisperListening() {
         if (!speechOnSince) speechOnSince = Date.now();
         if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
           hasSpeech = true;
-          _silentChunkCount = 0; // user is actively speaking — reset counter
           clearTimeout(noWordsTimer_); noWordsTimer_ = null;
           console.log(`[STT VAD] Speech confirmed — RMS: ${rms.toFixed(2)}, threshold was: ${speechThreshold.toFixed(2)}`);
         }
@@ -510,10 +438,7 @@ async function _startWhisperListening() {
       } else {
         speechOnSince = null;
         if (hasSpeech && elapsed >= VAD_MIN_MS && !silenceTimer_) {
-          silenceTimer_ = setTimeout(() => {
-            _vadSilenceDetected = true; // user stopped speaking — next onstop should auto-submit
-            stopRecording('silence after speech');
-          }, VAD_SILENCE_MS);
+          silenceTimer_ = setTimeout(() => stopRecording('silence after speech'), VAD_SILENCE_MS);
         }
       }
 
@@ -558,7 +483,7 @@ function stripStopKeyword(text) {
 }
 
 // ── Web Speech API (desktop only) ────────────────────────────
-const WS_SILENCE_MS     = 5000; // finalize after this many ms of no new words — increased to 5s to allow natural pauses mid-answer
+const WS_SILENCE_MS     = 2500; // finalize after this many ms of no new words (matches VAD_SILENCE_MS)
 const WS_NO_WORDS_MS    = 10000; // give up if zero results in this window
 let _wsNoWordsTimer = null;
 let _recognitionStopping = false;
@@ -742,11 +667,8 @@ function _stopRecognitionClean() {
 }
 
 export function stopListening() {
-  isListening          = false;
-  whisperActive        = false;
-  _whisperSubmitOnDone = false;
-  _silentChunkCount    = 0;
-  _vadSilenceDetected  = false;
+  isListening    = false;
+  whisperActive  = false;
   clearTimeout(silenceTimer);    silenceTimer    = null;
   clearTimeout(_wsNoWordsTimer); _wsNoWordsTimer = null;
   _stopWebSpeechVADMeter();
@@ -781,8 +703,6 @@ export function submitNow() {
   }
 
   if (mediaRecorder && mediaRecorder.state === 'recording') {
-    // Signal onstop to finalize (not accumulate) when this recording chunk finishes
-    _whisperSubmitOnDone = true;
     whisperActive = true;
     mediaRecorder.stop();
   }
