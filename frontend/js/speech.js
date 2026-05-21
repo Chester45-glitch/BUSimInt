@@ -243,12 +243,8 @@ const VAD_SPEECH_THRESHOLD_MAX = 40;  // absolute ceiling
 const VAD_CALIBRATION_MS    = 1000;  // measure ambient noise for this long before VAD activates
 const VAD_SPEECH_MULTIPLIER = 2.8;   // speech threshold = baseline * this multiplier
 const VAD_SPEECH_SUSTAIN_MS = 120;   // speech must sustain this long before hasSpeech=true
-// Dynamic silence patience via n-counter:
-//   n increments every second of silence (while hasSpeech), resets to 0 on any word.
-//   Submission fires when n reaches VAD_SILENCE_N_MAX (5 seconds of silence).
-//   Each second of silence is checked via VAD_SILENCE_TICK_MS interval.
-const VAD_SILENCE_N_MAX     = 5;     // submit after this many consecutive silence-seconds
-const VAD_SILENCE_TICK_MS   = 1000;  // check silence every 1 second
+const VAD_SILENCE_MS        = 2500;  // ms of silence after speech before stopping
+                                      // Increased from 1500 — natural thinking pauses can be 1-2s
 const VAD_MAX_MS            = 90000; // safety cap
 const VAD_MIN_MS            = 300;
 const VAD_POLL_MS           = 60;    // poll faster for responsiveness
@@ -330,11 +326,10 @@ async function _startWhisperListening() {
       if (_end) _end(accumulated);
     };
 
-    // submitNow() was called — finalize immediately regardless of transcript state.
-    // Fixes "stuck on submit": previously if fullTranscript was empty the flag was
-    // never consumed and the recorder looped forever.
-    if (_whisperSubmitOnDone) {
-      _finalize(fullTranscript.trim() ? 'submitNow' : 'submitNow (empty)');
+    // If submitNow() was called and we already have accumulated text, finalize immediately
+    // without waiting for this (possibly empty) final chunk to process.
+    if (_whisperSubmitOnDone && fullTranscript.trim()) {
+      _finalize('submitNow early');
       return;
     }
 
@@ -343,14 +338,9 @@ async function _startWhisperListening() {
       _silentChunkCount++;
       console.log(`[STT Whisper] Blob too small — silent chunk ${_silentChunkCount}/${MAX_SILENT_CHUNKS}`);
 
-      // VAD silence detected — finalize if we have text, otherwise keep listening
-      if (_vadSilenceDetected) {
-        if (fullTranscript.trim()) {
-          _finalize('VAD silence after speech (small blob)');
-        } else {
-          _vadSilenceDetected = false;
-          if (isListening) setTimeout(() => _startWhisperListening(), 300);
-        }
+      // submitNow() or VAD silence with accumulated text — finalize
+      if ((_whisperSubmitOnDone || _vadSilenceDetected) && fullTranscript.trim()) {
+        _finalize(_vadSilenceDetected ? 'VAD silence after speech (small blob)' : 'submitNow on small blob');
         return;
       }
 
@@ -361,7 +351,12 @@ async function _startWhisperListening() {
       }
 
       // Restart quietly and keep listening
-      if (isListening) setTimeout(() => _startWhisperListening(), 300);
+      _vadSilenceDetected = false;
+      if (isListening) {
+        // Only restart if VAD hasn't signaled end-of-speech — if it has and there's
+        // no transcript, just stop rather than looping forever on silent blobs.
+        setTimeout(() => _startWhisperListening(), 300);
+      }
       return;
     }
 
@@ -410,19 +405,8 @@ async function _startWhisperListening() {
     _silentChunkCount++;
     console.log(`[STT Whisper] No text returned — silent chunk ${_silentChunkCount}/${MAX_SILENT_CHUNKS}`);
 
-    // submitNow always finalizes unconditionally — flag must never be left hanging
-    if (_whisperSubmitOnDone) {
-      _finalize(fullTranscript.trim() ? 'submitNow (no-text chunk)' : 'submitNow (no-text, empty)');
-      return;
-    }
-
-    if (_vadSilenceDetected) {
-      if (fullTranscript.trim()) {
-        _finalize('VAD silence after speech (no-text chunk)');
-      } else {
-        _vadSilenceDetected = false;
-        if (isListening) setTimeout(() => _startWhisperListening(), 200);
-      }
+    if ((_whisperSubmitOnDone || _vadSilenceDetected) && fullTranscript.trim()) {
+      _finalize(_vadSilenceDetected ? 'VAD silence after speech (no-text chunk)' : 'submitNow on no-text chunk');
       return;
     }
 
@@ -432,6 +416,7 @@ async function _startWhisperListening() {
     }
 
     // Restart and keep listening
+    _vadSilenceDetected = false; // reset so next cycle starts fresh
     if (isListening) setTimeout(() => _startWhisperListening(), 200);
   };
 
@@ -449,6 +434,7 @@ async function _startWhisperListening() {
     const startTime = Date.now();
     let hasSpeech     = false;
     let speechOnSince = null;
+    let silenceTimer_ = null;
     let noWordsTimer_ = null;
     let vadRunning    = true;
     let smoothed      = 0;
@@ -464,15 +450,10 @@ async function _startWhisperListening() {
 
     _startVadDebug();
 
-    // n-counter: increments every second of silence after speech, resets to 0 on any word.
-    // When n reaches VAD_SILENCE_N_MAX (5), submission fires.
-    let silenceN       = 0;
-    let silenceTicker_ = null; // setInterval handle for the 1-s silence tick
-
     const stopRecording = (reason) => {
       if (!vadRunning) return;
       vadRunning = false;
-      clearInterval(silenceTicker_); silenceTicker_ = null;
+      clearTimeout(silenceTimer_);
       clearTimeout(noWordsTimer_);
       clearTimeout(maxTimer);
       _stopVadDebug();
@@ -489,22 +470,6 @@ async function _startWhisperListening() {
     };
 
     const maxTimer = setTimeout(() => stopRecording('max duration'), VAD_MAX_MS);
-
-    // Start the 1-second silence tick loop (n-counter)
-    // The ticker only acts once hasSpeech is true.
-    const startSilenceTicker = () => {
-      if (silenceTicker_) return; // already running
-      silenceTicker_ = setInterval(() => {
-        if (!vadRunning || !hasSpeech) return;
-        silenceN++;
-        console.log(`[STT VAD] Silence tick n=${silenceN}/${VAD_SILENCE_N_MAX}`);
-        if (silenceN >= VAD_SILENCE_N_MAX) {
-          clearInterval(silenceTicker_); silenceTicker_ = null;
-          _vadSilenceDetected = true;
-          stopRecording(`silence after speech (n=${silenceN})`);
-        }
-      }, VAD_SILENCE_TICK_MS);
-    };
 
     const poll = () => {
       if (!vadRunning || !whisperActive || !isListening) { clearTimeout(maxTimer); return; }
@@ -541,13 +506,6 @@ async function _startWhisperListening() {
 
       // ── Phase 2: Active VAD ───────────────────────────────
       if (rms >= speechThreshold) {
-        // User is speaking — reset n to 0 and pause the ticker
-        if (silenceN > 0) {
-          console.log(`[STT VAD] Speech resumed — resetting n from ${silenceN} to 0`);
-          silenceN = 0;
-        }
-        if (silenceTicker_) { clearInterval(silenceTicker_); silenceTicker_ = null; }
-
         if (!speechOnSince) speechOnSince = Date.now();
         if (!hasSpeech && (Date.now() - speechOnSince) >= VAD_SPEECH_SUSTAIN_MS) {
           hasSpeech = true;
@@ -555,11 +513,15 @@ async function _startWhisperListening() {
           clearTimeout(noWordsTimer_); noWordsTimer_ = null;
           console.log(`[STT VAD] Speech confirmed — RMS: ${rms.toFixed(2)}, threshold was: ${speechThreshold.toFixed(2)}`);
         }
+        // Voice active — cancel any pending silence cutoff
+        if (silenceTimer_) { clearTimeout(silenceTimer_); silenceTimer_ = null; }
       } else {
-        // Silence — start the ticker if speech has been confirmed
         speechOnSince = null;
-        if (hasSpeech && elapsed >= VAD_MIN_MS) {
-          startSilenceTicker();
+        if (hasSpeech && elapsed >= VAD_MIN_MS && !silenceTimer_) {
+          silenceTimer_ = setTimeout(() => {
+            _vadSilenceDetected = true; // user stopped speaking — next onstop should auto-submit
+            stopRecording('silence after speech');
+          }, VAD_SILENCE_MS);
         }
       }
 
