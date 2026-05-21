@@ -141,8 +141,7 @@ export async function startListening(onTranscript, onEnd, onError) {
   if (isListening) stopListening();
 
   // Reset all stale state
-  whisperActive        = false;
-  _whisperSubmitOnDone = false;
+  whisperActive = false;
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     try { mediaRecorder.stop(); } catch (_) {}
   }
@@ -221,11 +220,10 @@ function _stopWebSpeechVADMeter() {
 }
 
 // ── Whisper via MediaRecorder + VAD ──────────────────────────
-let mediaRecorder        = null;
-let audioChunks          = [];
-let whisperActive        = false;
-let vadAudioCtx          = null;
-let _whisperSubmitOnDone = false; // set by submitNow() to finalize instead of accumulate
+let mediaRecorder  = null;
+let audioChunks    = [];
+let whisperActive  = false;
+let vadAudioCtx    = null;
 
 // VAD constants
 // VAD_SPEECH_THRESHOLD is now a MINIMUM floor — the actual threshold is
@@ -301,37 +299,8 @@ async function _startWhisperListening() {
     const blob = new Blob(audioChunks, { type: mimeType });
     audioChunks = [];
 
-    // If submitNow() was called and we already have accumulated text, finalize immediately
-    // without waiting for this (possibly empty) final chunk to process.
-    if (_whisperSubmitOnDone && fullTranscript.trim()) {
-      _whisperSubmitOnDone = false;
-      const accumulated = fullTranscript.trim();
-      isListening   = false;
-      whisperActive = false;
-      mediaRecorder = null;
-      const _cb = onTranscriptCb, _end = onEndCb;
-      onTranscriptCb = null; onEndCb = null; onErrorCb = null;
-      if (_cb)  _cb(accumulated, true);
-      if (_end) _end(accumulated);
-      return;
-    }
-
     if (blob.size < 1500) {
-      // Too small — no real speech
-      if (_whisperSubmitOnDone && fullTranscript.trim()) {
-        // submitNow() with accumulated text — finalize
-        _whisperSubmitOnDone = false;
-        const accumulated = fullTranscript.trim();
-        isListening   = false;
-        whisperActive = false;
-        mediaRecorder = null;
-        const _cb = onTranscriptCb, _end = onEndCb;
-        onTranscriptCb = null; onEndCb = null; onErrorCb = null;
-        if (_cb)  _cb(accumulated, true);
-        if (_end) _end(accumulated);
-        return;
-      }
-      // Restart quietly and keep listening
+      // Too small — no real speech; restart quietly
       if (isListening) setTimeout(() => _startWhisperListening(), 300);
       return;
     }
@@ -352,29 +321,15 @@ async function _startWhisperListening() {
         const data = await res.json();
         const text = (data.text || '').trim();
         if (text) {
-          // Always accumulate this chunk first
-          const hadStopKeyword = checkStopKeyword(text);
-          const cleanChunk = stripStopKeyword(text);
-          fullTranscript = (fullTranscript + (fullTranscript ? ' ' : '') + cleanChunk).trim();
-
-          // Finalize if: stop keyword spoken, OR submitNow() was called
-          if (hadStopKeyword || _whisperSubmitOnDone) {
-            _whisperSubmitOnDone = false;
-            const accumulated = fullTranscript.trim();
-            isListening   = false;
-            whisperActive = false;
-            mediaRecorder = null;
-            const _cb = onTranscriptCb, _end = onEndCb;
-            onTranscriptCb = null; onEndCb = null; onErrorCb = null;
-            if (_cb)  _cb(accumulated, true);
-            if (_end) _end(accumulated);
-            return;
-          }
-
-          // Otherwise: show accumulated transcript as interim and keep listening for more
-          console.log(`[STT Whisper] Chunk accumulated (${fullTranscript.length} chars) — continuing to listen`);
-          if (onTranscriptCb) onTranscriptCb(fullTranscript, false);
-          if (isListening) setTimeout(() => _startWhisperListening(), 200);
+          const cleanText = stripStopKeyword(text);
+          fullTranscript = cleanText;
+          isListening    = false;
+          whisperActive  = false;
+          mediaRecorder  = null;
+          const _cb = onTranscriptCb, _end = onEndCb;
+          onTranscriptCb = null; onEndCb = null; onErrorCb = null;
+          if (_cb)  _cb(cleanText, true);
+          if (_end) _end(cleanText);
           return;
         }
       }
@@ -528,7 +483,7 @@ function stripStopKeyword(text) {
 }
 
 // ── Web Speech API (desktop only) ────────────────────────────
-const WS_SILENCE_MS     = 5000; // finalize after this many ms of no new words — increased to 5s to allow natural pauses mid-answer
+const WS_SILENCE_MS     = 2500; // finalize after this many ms of no new words (matches VAD_SILENCE_MS)
 const WS_NO_WORDS_MS    = 10000; // give up if zero results in this window
 let _wsNoWordsTimer = null;
 let _recognitionStopping = false;
@@ -712,9 +667,8 @@ function _stopRecognitionClean() {
 }
 
 export function stopListening() {
-  isListening          = false;
-  whisperActive        = false;
-  _whisperSubmitOnDone = false;
+  isListening    = false;
+  whisperActive  = false;
   clearTimeout(silenceTimer);    silenceTimer    = null;
   clearTimeout(_wsNoWordsTimer); _wsNoWordsTimer = null;
   _stopWebSpeechVADMeter();
@@ -749,8 +703,6 @@ export function submitNow() {
   }
 
   if (mediaRecorder && mediaRecorder.state === 'recording') {
-    // Signal onstop to finalize (not accumulate) when this recording chunk finishes
-    _whisperSubmitOnDone = true;
     whisperActive = true;
     mediaRecorder.stop();
   }
