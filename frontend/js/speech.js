@@ -330,10 +330,11 @@ async function _startWhisperListening() {
       if (_end) _end(accumulated);
     };
 
-    // If submitNow() was called and we already have accumulated text, finalize immediately
-    // without waiting for this (possibly empty) final chunk to process.
-    if (_whisperSubmitOnDone && fullTranscript.trim()) {
-      _finalize('submitNow early');
+    // submitNow() was called — finalize immediately regardless of transcript state.
+    // Fixes "stuck on submit": previously if fullTranscript was empty the flag was
+    // never consumed and the recorder looped forever.
+    if (_whisperSubmitOnDone) {
+      _finalize(fullTranscript.trim() ? 'submitNow' : 'submitNow (empty)');
       return;
     }
 
@@ -342,9 +343,14 @@ async function _startWhisperListening() {
       _silentChunkCount++;
       console.log(`[STT Whisper] Blob too small — silent chunk ${_silentChunkCount}/${MAX_SILENT_CHUNKS}`);
 
-      // submitNow() or VAD silence with accumulated text — finalize
-      if ((_whisperSubmitOnDone || _vadSilenceDetected) && fullTranscript.trim()) {
-        _finalize(_vadSilenceDetected ? 'VAD silence after speech (small blob)' : 'submitNow on small blob');
+      // VAD silence detected — finalize if we have text, otherwise keep listening
+      if (_vadSilenceDetected) {
+        if (fullTranscript.trim()) {
+          _finalize('VAD silence after speech (small blob)');
+        } else {
+          _vadSilenceDetected = false;
+          if (isListening) setTimeout(() => _startWhisperListening(), 300);
+        }
         return;
       }
 
@@ -355,12 +361,7 @@ async function _startWhisperListening() {
       }
 
       // Restart quietly and keep listening
-      _vadSilenceDetected = false;
-      if (isListening) {
-        // Only restart if VAD hasn't signaled end-of-speech — if it has and there's
-        // no transcript, just stop rather than looping forever on silent blobs.
-        setTimeout(() => _startWhisperListening(), 300);
-      }
+      if (isListening) setTimeout(() => _startWhisperListening(), 300);
       return;
     }
 
@@ -409,8 +410,19 @@ async function _startWhisperListening() {
     _silentChunkCount++;
     console.log(`[STT Whisper] No text returned — silent chunk ${_silentChunkCount}/${MAX_SILENT_CHUNKS}`);
 
-    if ((_whisperSubmitOnDone || _vadSilenceDetected) && fullTranscript.trim()) {
-      _finalize(_vadSilenceDetected ? 'VAD silence after speech (no-text chunk)' : 'submitNow on no-text chunk');
+    // submitNow always finalizes unconditionally — flag must never be left hanging
+    if (_whisperSubmitOnDone) {
+      _finalize(fullTranscript.trim() ? 'submitNow (no-text chunk)' : 'submitNow (no-text, empty)');
+      return;
+    }
+
+    if (_vadSilenceDetected) {
+      if (fullTranscript.trim()) {
+        _finalize('VAD silence after speech (no-text chunk)');
+      } else {
+        _vadSilenceDetected = false;
+        if (isListening) setTimeout(() => _startWhisperListening(), 200);
+      }
       return;
     }
 
@@ -420,7 +432,6 @@ async function _startWhisperListening() {
     }
 
     // Restart and keep listening
-    _vadSilenceDetected = false; // reset so next cycle starts fresh
     if (isListening) setTimeout(() => _startWhisperListening(), 200);
   };
 
